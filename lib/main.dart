@@ -83,7 +83,7 @@ class FundApi {
       final u = url.replaceFirst(RegExp(r'^https?://'), '$scheme://');
       try {
         final uri = Uri.parse(u);
-        final c = HttpClient()..connectionTimeout = _timeout..badCertificateCallback = (_, _, _) => true;
+        final c = HttpClient()..connectionTimeout = _timeout..badCertificateCallback = (cert, host, port) => true;
         try {
           final r = await c.getUrl(uri);
           headers!.forEach((k, v) => r.headers.set(k, v));
@@ -140,7 +140,7 @@ class FundApi {
       final m = RegExp(r'content:"([^"]+)"').firstMatch(body);
       if (m == null) return [];
       final rows = RegExp(
-        r'<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=[\'"]tor[\'"]>([\d\.]+)%',
+        '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''',
         dotAll: true,
       ).allMatches(m.group(1)!);
       return rows.map((r) => <String, dynamic>{
@@ -275,7 +275,7 @@ class _QueryPageState extends State<QueryPage> {
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 maxLength: 6,
-                buildCounter: (_, {currentLength, isFocused, maxLength}) => null,
+                buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
                 onSubmitted: (_) => _query(),
               ),
             ),
