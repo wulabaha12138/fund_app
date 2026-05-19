@@ -80,9 +80,7 @@ class FundApi {
       'Referer': 'https://fund.eastmoney.com/',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     };
-    // 优先使用 URL 本身的协议，失败再试反向协议
-    final schemes = url.startsWith('https://') ? ['https', 'http'] : ['http', 'https'];
-    for (var scheme in schemes) {
+    for (var scheme in ['https', 'http']) {
       final fixedUrl = url.replaceFirst(RegExp(r'^https?://'), '$scheme://');
       final uri = Uri.parse(fixedUrl);
       final client = HttpClient()
@@ -126,14 +124,13 @@ class FundApi {
     } catch (_) { return false; }
   }
 
-  // 腾讯个股涨跌幅（强制 HTTP）
+  // 腾讯个股涨跌幅
   static Future<double> fetchStockChange(String stockCode) async {
     String prefix;
     if (stockCode.startsWith('6')) prefix = 'sh';
     else if (stockCode.startsWith('8') || stockCode.startsWith('4')) prefix = 'bj';
     else prefix = 'sz';
-    // 强制 HTTP 避免 Android 上 HTTPS 被拦截
-    final url = 'http://qt.gtimg.cn/q=$prefix$stockCode';
+    final url = 'https://qt.gtimg.cn/q=$prefix$stockCode';
     try {
       final body = await _get(url);
       final parts = body.split('~');
