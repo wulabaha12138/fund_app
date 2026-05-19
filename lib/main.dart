@@ -71,16 +71,24 @@ class FundApi {
   static const _timeout = Duration(seconds: 10);
 
   static Future<String> _get(String url, {Map<String, String>? headers}) async {
+    // 按原始 URL 协议请求，不自动切换 http/https
+    // 如失败，再尝试反向协议（Python 版不需要这一步，但 Flutter 上某些接口需）
     headers ??= {
       'User-Agent': _ua,
-      'Accept': '*/*',
-      'Referer': 'https://fund.eastmoney.com/',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Referer': 'https://fund.eastmoney.com/',
     };
-    for (var s in ['https', 'http']) {
-      final u = url.replaceFirst(RegExp(r'^https?://'), '$s://');
+    final uris = [url];
+    // 如果 URL 有明确协议，也加一个反向协议尝试
+    if (url.startsWith('http://')) uris.add(url.replaceFirst('http://', 'https://'));
+    else if (url.startsWith('https://')) uris.add(url.replaceFirst('https://', 'http://'));
+
+    for (final u in uris) {
       try {
-        final c = HttpClient()..connectionTimeout = _timeout..badCertificateCallback = (a, b, c) => true;
+        final c = HttpClient()
+          ..connectionTimeout = _timeout
+          ..badCertificateCallback = (cert, host, port) => true;
         try {
           final rq = await c.getUrl(Uri.parse(u));
           headers!.forEach((k, v) => rq.headers.set(k, v));
@@ -114,8 +122,9 @@ class FundApi {
       final body = await _get(url);
       final cm = RegExp(r'content:"([^"]+)"').firstMatch(body);
       if (cm == null) return [];
+      // 匹配 class="tor" 或 class='tor' 或 class=tor
       final rows = RegExp(
-        r'<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class="tor">([\d\.]+)%',
+        r'<tr[^>]*><td[^>]*>\d+</td><td[^>]*><a[^>]*>(\d{6})</a></td><td[^>]*><a[^>]*>([^<]+)</a></td>[^<]*<td[^>]*class=["\']?tor["\']?[^>]*>([\d\.]+)%',
         dotAll: true,
       ).allMatches(cm.group(1)!);
       if (rows.isEmpty) return [];
