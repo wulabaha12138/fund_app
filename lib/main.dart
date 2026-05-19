@@ -117,10 +117,8 @@ class FundApi {
       final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);
       if (contentMatch == null) return [];
       final content = contentMatch.group(1)!;
-      final rows = RegExp(
-        r'<tr.*?><td.*?>(\d+)</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=[\'"]tor[\'"]>([\d\.]+)%',
-        dotAll: true,
-      ).allMatches(content);
+      const pattern = '<tr.*?><td.*?>\\d+</td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["\']tor["\']>([\\d\\.]+)%';
+      final rows = RegExp(pattern, dotAll: true).allMatches(content);
       return rows.map((r) => <String, dynamic>{
         'code': r.group(2)!, 'name': r.group(3)!.trim(), 'pct': double.tryParse(r.group(4)!) ?? 0,
       }).toList();
@@ -345,7 +343,7 @@ class _QueryPageState extends State<QueryPage> {
               if (r.navDate != null) _infoRow('净值日期', r.navDate!),
             ],
             if (r.change != null)
-              _infoRow('涨跌幅', '$changeSign${r.change!.toStringAsFixed(2)}% ($changeLabel)',
+              _infoRow('涨跌幅', '$changeSign${r.change!.toStringAsFixed(2)}% (${r.changeLabel})',
                 valueColor: changeColor),
             _infoRow('更新时间', r.updateTime),
           ]),
