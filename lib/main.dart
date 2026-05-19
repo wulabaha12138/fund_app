@@ -113,36 +113,68 @@ class FundApi {
     return '已收盘';
   }
 
-  /// 股票前缀
-  static String _stockPrefix(String code) {
-    if (code.startsWith('6')) return 'sh';
-    if (code.startsWith('8') || code.startsWith('4')) return 'bj';
-    return 'sz';
-  }
-
-  /// 获取股票涨跌幅
+/// 获取股票涨跌幅（腾讯行情）
   static Future<double> _stockChange(String code) async {
+    String prefix;
+    if (code.startsWith('6')) prefix = 'sh';
+    else if (code.startsWith('8') || code.startsWith('4')) prefix = 'bj';
+    else prefix = 'sz';
+
+    // 腾讯行情
     try {
-      final body = await _get('https://qt.gtimg.cn/q=${_stockPrefix(code)}$code');
+      final body = await _get('http://qt.gtimg.cn/q=$prefix$code');
       final parts = body.split('~');
-      // 43 = 最新价, 44=最高, 45=最低, 32=涨跌幅%
-      if (parts.length > 43) {
-        // 先看是否有行情（非空）
-        if (parts[43].trim().isNotEmpty) {
-          return double.tryParse(parts[32].trim()) ?? 0.0;
-        }
-      } else if (parts.length > 32) {
-        return double.tryParse(parts[32].trim()) ?? 0.0;
+      if (parts.length > 32) {
+        final v = double.tryParse(parts[32].trim());
+        if (v != null) return v;
       }
     } catch (_) {}
+
+    // 新浪行情兜底
+    try {
+      final body = await _get('http://hq.sinajs.cn/list=$prefix$code');
+      final parts = body.split(',');
+      // 新浪格式: var hq_str_sh600000="名称,开盘,昨收,当前,最高,最低,...涨跌幅,..."
+      if (parts.length > 30) {
+        final v = double.tryParse(parts[30].trim());
+        if (v != null) return v;
+      }
+    } catch (_) {}
+
     return 0.0;
   }
 
-  /// 获取持仓
+  /// 获取持仓（新浪财经接口）
   static Future<List<Map<String, dynamic>>> _holdings(String code) async {
-    final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$code&topline=10';
+    // 新浪基金持仓接口
+    final url = 'http://vip.stock.finance.sina.com.cn/fund_center/api/jsonp.php/IO.XSRV2.FundJJDX/FundJJDX_GetJJDX?c=$code';
     try {
       final body = await _get(url);
+      if (body.isEmpty || body == 'null') return [];
+      // 新浪返回格式: IO.XSRV2.FundJJDX([{...},{...}])
+      // 也可能是纯 JSON
+      String jsonStr = body.trim();
+      // 去掉函数包裹
+      final m = RegExp(r'^\w+\((.+)\)$', dotAll: true).firstMatch(jsonStr);
+      if (m != null) jsonStr = m.group(1)!;
+      jsonStr = jsonStr.trim();
+      if (jsonStr.startsWith('[') || jsonStr.startsWith('{')) {
+        final list = jsonDecode(jsonStr) as List;
+        return list.map((item) {
+          final Map<String, dynamic> map = item is Map ? item as Map<String, dynamic> : {};
+          final stockCode = (map['symbol'] as String? ?? '').replaceAll(RegExp(r'^(sh|sz|bj)'), '');
+          return <String, dynamic>{
+            'code': stockCode,
+            'name': map['name'] as String? ?? map['stock_name'] as String? ?? '',
+            'pct': (map['jjzbl'] as num?)?.toDouble() ?? (map['hold_ratio'] as num?)?.toDouble() ?? 0,
+          };
+        }).toList();
+      }
+    } catch (_) {}
+
+    // fallback: 用 fundf10 接口试试
+    try {
+      final body = await _get('http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$code&topline=10');
       final m = RegExp(r'content:"([^"]+)"').firstMatch(body);
       if (m == null) return [];
       final rows = RegExp(
@@ -155,30 +187,21 @@ class FundApi {
     } catch (_) { return []; }
   }
 
-  /// 获取基本信息（天天基金接口）
+  /// 获取基本信息（fundgz HTTP 接口）
   static Future<Map<String, dynamic>> _baseInfo(String code) async {
-    // 1. fundgz 实时估值 -> 基金名称
     String name = '基金$code';
+    String? nav, navDate;
+    double? actualChange;
     try {
       final body = await _get('http://fundgz.1234567.com.cn/js/$code.js');
       final m = RegExp(r'jsonpgz\((.+)\)').firstMatch(body);
       if (m != null) {
         final j = jsonDecode(m.group(1)!) as Map<String, dynamic>;
         name = j['name'] as String? ?? name;
+        nav = j['dwjz'] as String?;
+        navDate = j['jzrq'] as String?;
       }
     } catch (_) {}
-
-    // 2. 天天基金净值页面 -> 最新净值和日期
-    String? nav, navDate;
-    double? actualChange;
-    try {
-      final html = await _get('http://fund.eastmoney.com/$code.html');
-      final nm = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
-      if (nm != null) { navDate = nm.group(1); nav = nm.group(2); }
-      final ac = RegExp(r'>([+-]?\d+\.?\d*)%<').firstMatch(html);
-      if (ac != null) actualChange = double.tryParse(ac.group(1)!);
-    } catch (_) {}
-
     return {'name': name, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
   }
 
