@@ -71,7 +71,14 @@ class FundApi {
   static const _ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
   static Future<String> _get(String url, {Map<String, String>? headers}) async {
-    headers ??= {'User-Agent': _ua, 'Accept': '*/*'};
+    // Python 版一样的 headers
+    headers ??= {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Referer': 'https://fund.eastmoney.com/',
+      'Connection': 'keep-alive',
+    };
 
     for (var scheme in ['https', 'http']) {
       final u = url.replaceFirst(RegExp(r'^https?://'), '$scheme://');
@@ -87,7 +94,9 @@ class FundApi {
             if (body.isNotEmpty) return body;
           }
         } finally { c.close(force: true); }
-      } catch (_) {}
+      } catch (e) {
+        // 继续尝试下一个协议
+      }
     }
     throw Exception('网络请求失败');
   }
@@ -144,10 +153,36 @@ class FundApi {
     return 0.0;
   }
 
-  /// 持仓（新浪）
+  /// 持仓（东方财富 + 新浪兜底）
   static Future<List<Map<String, dynamic>>> _holdings(String code) async {
-    final url = 'http://vip.stock.finance.sina.com.cn/fund_center/api/jsonp.php/IO.XSRV2.FundJJDX/FundJJDX_GetJJDX?c=$code';
+    // 先试东方财富 fundf10 (Python版用的这个)
     try {
+      final url = 'http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$code&topline=10';
+      final body = await _get(url);
+      if (body.contains('content:"')) {
+        final m = RegExp(r'content:"([^"]+)"').firstMatch(body);
+        if (m != null) {
+          final content = m.group(1)!;
+          final rows = RegExp(
+            '''<tr.*?><td.*?>\\d+</td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\\d\\.]+)%''',
+            dotAll: true,
+          ).allMatches(content);
+          if (rows.isNotEmpty) {
+            return rows.map((r) => <String, dynamic>{
+              'code': r.group(1)!, 'name': r.group(2)!.trim(), 'pct': double.tryParse(r.group(3)!) ?? 0,
+            }).toList();
+          }
+        }
+      }
+      // 如果到了这里，说明请求成功但解析失败 - 保存前200字符用于调试
+      throw Exception('解析失败, 返回内容前200字符: ${body.substring(0, body.length > 200 ? 200 : body.length)}');
+    } catch (e) {
+      print('东方财富持仓失败: $e');
+    }
+
+    // 新浪兜底
+    try {
+      final url = 'http://vip.stock.finance.sina.com.cn/fund_center/api/jsonp.php/IO.XSRV2.FundJJDX/FundJJDX_GetJJDX?c=$code';
       final body = await _get(url);
       if (body.isEmpty || body == 'null') return [];
       String jsonStr = body.trim();
@@ -170,22 +205,36 @@ class FundApi {
     return [];
   }
 
-  /// 基本信息（fundgz）
+  /// 基本信息（fundgz + 东方财富页面）
   static Future<Map<String, dynamic>> _baseInfo(String code) async {
+    String name = '基金$code';
+    String? nav, navDate;
+    double? actualChange;
+
+    // 1. fundgz 拿名称
     try {
       final body = await _get('http://fundgz.1234567.com.cn/js/$code.js');
       final m = RegExp(r'jsonpgz\((.+)\)').firstMatch(body);
       if (m != null) {
         final j = jsonDecode(m.group(1)!) as Map<String, dynamic>;
-        return {
-          'name': j['name'] ?? '基金$code',
-          'nav': j['dwjz'],
-          'navDate': j['jzrq'],
-          'actualChange': null,
-        };
+        name = j['name'] ?? name;
+        if (nav == null) nav = j['dwjz'];
+        if (navDate == null) navDate = j['jzrq'];
       }
     } catch (_) {}
-    return {'name': '基金$code', 'nav': null, 'navDate': null, 'actualChange': null};
+
+    // 2. 东方财富页面拿今日净值和实际涨跌幅（Python版同款）
+    try {
+      final html = await _get('http://fund.eastmoney.com/$code.html');
+      // 实际涨跌幅
+      final ac = RegExp(r'>([+-]?\d+\.?\d*)%<').firstMatch(html);
+      if (ac != null) actualChange = double.tryParse(ac.group(1)!);
+      // 单位净值 + 日期
+      final nm = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
+      if (nm != null) { navDate = nm.group(1); nav = nm.group(2); }
+    } catch (_) {}
+
+    return {'name': name, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
   }
 
   /// 查询B站热门
