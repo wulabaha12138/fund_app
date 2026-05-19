@@ -144,17 +144,42 @@ class FundApi {
     return 0.0;
   }
 
-  // 天天基金持仓（使用 html 包解析）
+  // 天天基金持仓（正则 + html fallback）
   static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {
     final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';
     try {
       final body = await _get(url);
       final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);
-      if (contentMatch == null) return [];
-      final content = contentMatch.group(1)!;
+      if (contentMatch == null) {
+        print('未找到 content 字段');
+        return [];
+      }
+      String content = contentMatch.group(1)!;
+      // 解码 HTML 实体
+      content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
+
+      // 方法1：正则（与 Python 版相同）
+      // 使用三引号字符串避免 Dart raw 字符串中 \' 的转义问题
+      const pattern = '''<tr.*?><td.*?>\\d+</td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\\d\\.]+)%''';
+      final reg = RegExp(pattern, dotAll: true);
+      final matches = reg.allMatches(content);
+      final holdings = <Map<String, dynamic>>[];
+      for (final m in matches) {
+        final code = m.group(1)!;
+        final name = m.group(2)!.trim();
+        final pct = double.tryParse(m.group(3)!) ?? 0.0;
+        if (code.length == 6 && pct > 0) {
+          holdings.add({'code': code, 'name': name, 'pct': pct});
+        }
+      }
+      if (holdings.isNotEmpty) {
+        print('正则解析到 ${holdings.length} 条持仓');
+        return holdings;
+      }
+
+      // 方法2：html 包 fallback
       final document = html_parser.parse(content);
       final rows = document.querySelectorAll('table tr');
-      final holdings = <Map<String, dynamic>>[];
       for (var row in rows) {
         final cells = row.querySelectorAll('td');
         if (cells.length >= 4) {
@@ -172,9 +197,10 @@ class FundApi {
           }
         }
       }
+      print('DOM 解析到 ${holdings.length} 条持仓');
       return holdings;
     } catch (e) {
-      print('持仓解析失败: $e');
+      print('持仓解析异常: $e');
       return [];
     }
   }
