@@ -128,8 +128,8 @@ class FundApi {
         // 提取股票名称: <a ...>招商银行</a>
         final nameMatches = RegExp(r'<a[^>]*>([^<]+)</a>').allMatches(trHtml).toList();
         if (nameMatches.length < 2) continue;
-        // 提取占比: <td class="tor">5.23%</td> 或 class='tor'
-        final pctMatch = RegExp(r'<td[^>]*class=["\']?tor["\']?[^>]*>([\d\.]+)%').firstMatch(trHtml);
+        // 提取占比: <td class="tor">5.23%</td>  天天基金实际返回 class="tor"
+        final pctMatch = RegExp(r'<td[^>]*class="tor"[^>]*>([\d\.]+)%').firstMatch(trHtml);
         if (pctMatch == null) continue;
         results.add({
           'code': codeMatch.group(1),
