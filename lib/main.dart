@@ -41,33 +41,27 @@ class StockHolding {
   final String name;
   final String code;
   final double pct;
-  final double change; // 涨跌幅 %
+  final double change;
   StockHolding({required this.name, required this.code, required this.pct, required this.change});
 }
 
 class FundResult {
   final String name;
   final String code;
-  final String? nav;        // 最新净值
-  final String? navDate;    // 净值日期
-  final double? actualChange; // 实际涨跌幅（如已公布）
-  final bool hasFinalNav;   // 今日净值是否已公布
+  final String? nav;
+  final String? navDate;
+  final double? actualChange;
+  final bool hasFinalNav;
   final List<StockHolding> holdings;
-  final double totalPct;    // 持仓合计
-  final String updateTime;  // 更新时间
-  final String statusStr;   // 状态文字
+  final double totalPct;
+  final String updateTime;
+  final String statusStr;
 
   FundResult({
-    required this.name,
-    required this.code,
-    this.nav,
-    this.navDate,
-    this.actualChange,
-    required this.hasFinalNav,
-    required this.holdings,
-    required this.totalPct,
-    required this.updateTime,
-    required this.statusStr,
+    required this.name, required this.code,
+    this.nav, this.navDate, this.actualChange,
+    required this.hasFinalNav, required this.holdings, required this.totalPct,
+    required this.updateTime, required this.statusStr,
   });
 }
 
@@ -79,7 +73,6 @@ class FundApi {
   static Future<String> _get(String url, {Map<String, String>? headers}) async {
     headers ??= {'User-Agent': _ua, 'Accept': '*/*'};
 
-    // 尝试两次：dart:io HttpClient
     for (var scheme in ['https', 'http']) {
       final u = url.replaceFirst(RegExp(r'^https?://'), '$scheme://');
       try {
@@ -91,36 +84,47 @@ class FundApi {
           final resp = await r.close();
           if (resp.statusCode == 200) {
             final body = await resp.transform(utf8.decoder).join();
-            return body;
+            if (body.isNotEmpty) return body;
           }
         } finally { c.close(force: true); }
       } catch (_) {}
     }
-
-    // 兜底：改用 Dart socket 直接发 HTTP 请求
-    throw Exception('网络请求失败: $url');
+    throw Exception('网络请求失败');
   }
 
-  /// 获取交易时段
   static String _sessionLabel() {
     final now = DateTime.now();
     if (now.weekday > 5) return '休市';
     final t = now.hour * 60 + now.minute;
-    if (t < 570) return '未开市';   // 9:30
-    if (t <= 690) return '交易中';  // 11:30
-    if (t < 780) return '午休';     // 13:00
-    if (t <= 900) return '交易中';  // 15:00
+    if (t < 570) return '未开市';
+    if (t <= 690) return '交易中';
+    if (t < 780) return '午休';
+    if (t <= 900) return '交易中';
     return '已收盘';
   }
 
-/// 获取股票涨跌幅（腾讯行情）
+  /// B站热门视频（验证网络）
+  static Future<List<String>> _bilibiliHot() async {
+    try {
+      final body = await _get('https://api.bilibili.com/x/web-interface/popular');
+      final j = jsonDecode(body);
+      final list = j['data']['list'] as List;
+      return list.take(10).map((item) {
+        final title = item['title'] as String? ?? '无标题';
+        final bvid = item['bvid'] as String? ?? '';
+        return '$title (https://www.bilibili.com/video/$bvid)';
+      }).toList();
+    } catch (e) {
+      return ['❌ B站API请求失败: $e'];
+    }
+  }
+
+  /// 腾讯行情
   static Future<double> _stockChange(String code) async {
     String prefix;
     if (code.startsWith('6')) prefix = 'sh';
     else if (code.startsWith('8') || code.startsWith('4')) prefix = 'bj';
     else prefix = 'sz';
-
-    // 腾讯行情
     try {
       final body = await _get('http://qt.gtimg.cn/q=$prefix$code');
       final parts = body.split('~');
@@ -129,32 +133,24 @@ class FundApi {
         if (v != null) return v;
       }
     } catch (_) {}
-
-    // 新浪行情兜底
     try {
       final body = await _get('http://hq.sinajs.cn/list=$prefix$code');
       final parts = body.split(',');
-      // 新浪格式: var hq_str_sh600000="名称,开盘,昨收,当前,最高,最低,...涨跌幅,..."
       if (parts.length > 30) {
         final v = double.tryParse(parts[30].trim());
         if (v != null) return v;
       }
     } catch (_) {}
-
     return 0.0;
   }
 
-  /// 获取持仓（新浪财经接口）
+  /// 持仓（新浪）
   static Future<List<Map<String, dynamic>>> _holdings(String code) async {
-    // 新浪基金持仓接口
     final url = 'http://vip.stock.finance.sina.com.cn/fund_center/api/jsonp.php/IO.XSRV2.FundJJDX/FundJJDX_GetJJDX?c=$code';
     try {
       final body = await _get(url);
       if (body.isEmpty || body == 'null') return [];
-      // 新浪返回格式: IO.XSRV2.FundJJDX([{...},{...}])
-      // 也可能是纯 JSON
       String jsonStr = body.trim();
-      // 去掉函数包裹
       final m = RegExp(r'^\w+\((.+)\)$', dotAll: true).firstMatch(jsonStr);
       if (m != null) jsonStr = m.group(1)!;
       jsonStr = jsonStr.trim();
@@ -171,39 +167,29 @@ class FundApi {
         }).toList();
       }
     } catch (_) {}
-
-    // fallback: 用 fundf10 接口试试
-    try {
-      final body = await _get('http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$code&topline=10');
-      final m = RegExp(r'content:"([^"]+)"').firstMatch(body);
-      if (m == null) return [];
-      final rows = RegExp(
-        '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''',
-        dotAll: true,
-      ).allMatches(m.group(1)!);
-      return rows.map((r) => <String, dynamic>{
-        'code': r.group(1)!, 'name': r.group(2)!.trim(), 'pct': double.tryParse(r.group(3)!) ?? 0,
-      }).toList();
-    } catch (_) { return []; }
+    return [];
   }
 
-  /// 获取基本信息（fundgz HTTP 接口）
+  /// 基本信息（fundgz）
   static Future<Map<String, dynamic>> _baseInfo(String code) async {
-    String name = '基金$code';
-    String? nav, navDate;
-    double? actualChange;
     try {
       final body = await _get('http://fundgz.1234567.com.cn/js/$code.js');
       final m = RegExp(r'jsonpgz\((.+)\)').firstMatch(body);
       if (m != null) {
         final j = jsonDecode(m.group(1)!) as Map<String, dynamic>;
-        name = j['name'] as String? ?? name;
-        nav = j['dwjz'] as String?;
-        navDate = j['jzrq'] as String?;
+        return {
+          'name': j['name'] ?? '基金$code',
+          'nav': j['dwjz'],
+          'navDate': j['jzrq'],
+          'actualChange': null,
+        };
       }
     } catch (_) {}
-    return {'name': name, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
+    return {'name': '基金$code', 'nav': null, 'navDate': null, 'actualChange': null};
   }
+
+  /// 查询B站热门
+  static Future<List<String>> bilibiliHot() => _bilibiliHot();
 
   /// 查询基金
   static Future<FundResult> query(String code) async {
@@ -211,7 +197,6 @@ class FundApi {
     final name = base['name'];
     final nav = base['nav'] as String?;
     final navDate = base['navDate'] as String?;
-    final actualChange = base['actualChange'] as double?;
 
     final holdings = await _holdings(code);
     final stocks = <StockHolding>[];
@@ -231,9 +216,8 @@ class FundApi {
     final session = _sessionLabel();
     final nowStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
 
-    // 判断今日净值是否已公布
     bool hasFinal = false;
-    if (navDate != null && actualChange != null) {
+    if (navDate != null) {
       try {
         final d = DateTime.tryParse(navDate);
         if (d != null && d.year == now.year && d.month == now.month && d.day == now.day) {
@@ -253,7 +237,7 @@ class FundApi {
 
     return FundResult(
       name: name, code: code, nav: nav, navDate: navDate,
-      actualChange: actualChange, hasFinalNav: hasFinal,
+      actualChange: null, hasFinalNav: hasFinal,
       holdings: stocks, totalPct: totalPct,
       updateTime: nowStr, statusStr: status,
     );
@@ -272,6 +256,8 @@ class _QueryPageState extends State<QueryPage> {
   FundResult? _result;
   bool _loading = false;
   String? _error;
+  List<String>? _bilibiliResult;
+  bool _bilibiliLoading = false;
 
   Future<void> _query() async {
     final code = _codeCtrl.text.trim();
@@ -290,36 +276,58 @@ class _QueryPageState extends State<QueryPage> {
     }
   }
 
+  Future<void> _queryBilibili() async {
+    setState(() { _bilibiliLoading = true; _bilibiliResult = null; });
+    try {
+      final r = await FundApi.bilibiliHot();
+      setState(() { _bilibiliResult = r; _bilibiliLoading = false; });
+    } catch (e) {
+      setState(() { _bilibiliResult = ['❌ 请求失败: $e']; _bilibiliLoading = false; });
+    }
+  }
+
   @override
   void dispose() { _codeCtrl.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('基金查询'), centerTitle: false),
+      appBar: AppBar(
+        title: const Text('基金查询'),
+        centerTitle: false,
+        actions: [
+          TextButton.icon(
+            onPressed: _bilibiliLoading ? null : _queryBilibili,
+            icon: const Icon(Icons.videocam, size: 18),
+            label: Text(_bilibiliLoading ? '加载中...' : '验证网络'),
+          ),
+        ],
+      ),
       body: Column(children: [
         // 输入区
         Container(
           color: Colors.white,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(children: [
-            SizedBox(
-              width: 160,
-              child: TextField(
-                controller: _codeCtrl,
-                decoration: const InputDecoration(
-                  labelText: '基金代码', border: OutlineInputBorder(),
-                  isDense: true, hintText: '6位数字',
+          child: Column(children: [
+            Row(children: [
+              SizedBox(
+                width: 160,
+                child: TextField(
+                  controller: _codeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '基金代码', border: OutlineInputBorder(),
+                    isDense: true, hintText: '6位数字',
+                  ),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  maxLength: 6,
+                  buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
+                  onSubmitted: (_) => _query(),
                 ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                maxLength: 6,
-                buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
-                onSubmitted: (_) => _query(),
               ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(onPressed: _loading ? null : _query, child: const Text('查询')),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: _loading ? null : _query, child: const Text('查询')),
+            ]),
           ]),
         ),
         const Divider(height: 1),
@@ -328,11 +336,29 @@ class _QueryPageState extends State<QueryPage> {
         Expanded(
           child: _loading
               ? const Center(child: CircularProgressIndicator())
-              : _error != null
-                  ? Center(child: Text('❌ $_error', style: const TextStyle(color: kRedUp)))
-                  : _result == null
-                      ? const Center(child: Text('输入基金代码查询', style: TextStyle(color: kMuted, fontSize: 16)))
-                      : _buildResult(_result!),
+              : _bilibiliResult != null
+                  ? ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        const Text('B站热门视频 Top 10', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        ..._bilibiliResult!.asMap().entries.map((e) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            SizedBox(
+                              width: 24,
+                              child: Text('${e.key + 1}.', style: const TextStyle(color: kMuted)),
+                            ),
+                            Expanded(child: Text('${e.value}', style: const TextStyle(fontSize: 13))),
+                          ]),
+                        )),
+                      ],
+                    )
+                  : _error != null
+                      ? Center(child: Text('❌ $_error', style: const TextStyle(color: kRedUp)))
+                      : _result == null
+                          ? const Center(child: Text('输入基金代码查询\n或点右上角"验证网络"测试接口', style: TextStyle(color: kMuted, fontSize: 16), textAlign: TextAlign.center))
+                          : _buildResult(_result!),
         ),
       ]),
     );
@@ -342,32 +368,18 @@ class _QueryPageState extends State<QueryPage> {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // 基金名称 + 状态
         _section('基金信息', [
           _row('名称', r.name),
           _row('代码', r.code),
           _row('状态', r.statusStr),
           _row('更新时间', r.updateTime),
         ]),
-
         const SizedBox(height: 12),
-
-        // 净值信息
         if (r.nav != null) _section('最新净值', [
           _row('单位净值', r.nav!),
           if (r.navDate != null) _row('净值日期', r.navDate!),
         ]),
-        if (r.actualChange != null && r.hasFinalNav)
-          Padding(
-            padding: const EdgeInsets.only(left: 16, bottom: 8),
-            child: Text('今日涨跌: ${r.actualChange! >= 0 ? "+" : ""}${r.actualChange!.toStringAsFixed(2)}%',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
-                color: r.actualChange! >= 0 ? kRedUp : kGreenDown)),
-          ),
-
         const SizedBox(height: 12),
-
-        // 持仓
         if (r.holdings.isNotEmpty) ...[
           _section('持仓股票 (${r.holdings.length}只)', [
             _row('持仓合计', '${r.totalPct.toStringAsFixed(1)}%'),
