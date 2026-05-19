@@ -28,36 +28,35 @@ class FundApp extends StatelessWidget {
   }
 }
 
-// ---------- 颜色常量 ----------
 const Color kRedUp = Color(0xFFEF4444);
 const Color kGreenDown = Color(0xFF10B981);
 const Color kTextMuted = Color(0xFF64748B);
 const Color kCardBg = Color(0xFFFFFFFF);
 const Color kBorder = Color(0xFFE2E8F0);
 
-// ---------- 数据模型 ----------
 class StockHolding {
   final String name;
   final String code;
-  final double pct; // 占净值比例 (%)
-  final double change; // 实时涨跌幅 (%)
-  StockHolding({required this.name, required this.code, required this.pct, required this.change});
+  final double pct;
+  final double? change; // 允许为 null，表示获取失败
+  final String? errorMsg; // 错误信息
+  StockHolding({required this.name, required this.code, required this.pct, this.change, this.errorMsg});
 }
 
 class FundData {
   final String fundName;
   final String fundCode;
-  final String? nav; // 最新单位净值
-  final String? navDate; // 净值日期
-  final double estimatedChange; // 估算涨跌幅 (%)
-  final double? estimatedNav; // 估算净值
-  final double? actualChange; // 实际涨跌幅 (已公布时)
+  final String? nav;
+  final String? navDate;
+  final double estimatedChange;
+  final double? estimatedNav;
+  final double? actualChange;
   final bool isFinal;
   final List<StockHolding> holdings;
   final double totalPct;
   final String updateTime;
   final String status;
-
+  final String? networkError; // 全局网络错误
   FundData({
     required this.fundName,
     required this.fundCode,
@@ -71,15 +70,14 @@ class FundData {
     required this.totalPct,
     required this.updateTime,
     required this.status,
+    this.networkError,
   });
 }
 
-// ---------- API 服务 ----------
 class FundApi {
   static const _timeout = Duration(seconds: 15);
   static const _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
-  /// 统一网络请求：自动降级 http/https，忽略证书错误（仅用于调试）
   static Future<String> _get(String url, {Map<String, String>? headers}) async {
     headers ??= {
       'User-Agent': _userAgent,
@@ -100,15 +98,14 @@ class FundApi {
           return await response.transform(utf8.decoder).join();
         }
       } catch (e) {
-        print('请求失败 $scheme://: $e');
+        // 继续尝试下一个协议
       } finally {
         client.close();
       }
     }
-    throw Exception('网络请求失败: $url');
+    throw Exception('网络请求失败，请检查网络或稍后重试');
   }
 
-  /// 交易时段判断
   static String getSessionLabel() {
     final now = DateTime.now();
     if (now.weekday > 5) return '休市';
@@ -129,8 +126,8 @@ class FundApi {
     } catch (_) { return false; }
   }
 
-  /// 腾讯个股涨跌幅（增强版，支持多字段索引）
-  static Future<double> fetchStockChange(String stockCode) async {
+  // 个股涨跌幅（完全对齐 Python 版）
+  static Future<double?> fetchStockChange(String stockCode) async {
     String prefix;
     if (stockCode.startsWith('6')) prefix = 'sh';
     else if (stockCode.startsWith('8') || stockCode.startsWith('4')) prefix = 'bj';
@@ -139,26 +136,28 @@ class FundApi {
     try {
       final body = await _get(url);
       final parts = body.split('~');
-      if (parts.length > 31) {
-        // 尝试多个可能包含涨跌幅的位置（31 或 32）
-        for (int idx in [31, 32]) {
-          if (parts.length > idx) {
-            final raw = parts[idx].trim().replaceAll('%', '');
-            if (raw.isNotEmpty && raw != '--') {
-              final val = double.tryParse(raw);
-              if (val != null) return val;
-            }
-          }
+      // 与 Python 版完全一致：优先取索引 32，再取索引 31
+      if (parts.length > 32) {
+        final raw = parts[32].trim().replaceAll('%', '');
+        if (raw.isNotEmpty && raw != '--') {
+          final val = double.tryParse(raw);
+          if (val != null) return val;
         }
       }
-      return 0.0;
+      if (parts.length > 31) {
+        final raw = parts[31].trim().replaceAll('%', '');
+        if (raw.isNotEmpty && raw != '--') {
+          final val = double.tryParse(raw);
+          if (val != null) return val;
+        }
+      }
+      return null; // 解析失败
     } catch (e) {
-      print('获取股票 $stockCode 涨跌幅失败: $e');
-      return 0.0;
+      return null; // 网络异常
     }
   }
 
-  /// 天天基金持仓（使用正则，与 Python 版一致）
+  // 天天基金持仓（使用正则）
   static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {
     final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';
     try {
@@ -166,10 +165,9 @@ class FundApi {
       final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);
       if (contentMatch == null) return [];
       String content = contentMatch.group(1)!;
-      // 解码 HTML 实体
       content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
-      // 正则与 Python 版一致
-      const pattern = '''<tr.*?><td.*?>\\d+</td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\\d\\.]+)%''';
+      // 用三引号字符串避免 Dart 中 \' 编译问题，逻辑与你的正则完全一致
+      const pattern = '''<tr.*?><td.*?>\\d+<td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\\d\\.]+)%''';
       final reg = RegExp(pattern, dotAll: true);
       final matches = reg.allMatches(content);
       final holdings = <Map<String, dynamic>>[];
@@ -183,12 +181,10 @@ class FundApi {
       }
       return holdings;
     } catch (e) {
-      print('持仓解析失败: $e');
       return [];
     }
   }
 
-  /// 天天基金基本信息（名称、净值、实际涨跌幅）
   static Future<Map<String, dynamic>> fetchBaseInfo(String fundCode) async {
     final url = 'https://fund.eastmoney.com/$fundCode.html';
     try {
@@ -212,83 +208,115 @@ class FundApi {
       if (changeMatch != null) actualChange = double.tryParse(changeMatch.group(1)!);
       return {'fundName': fundName, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
     } catch (e) {
-      print('基本信息失败: $e');
       return {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};
     }
   }
 
-  /// 主查询函数
   static Future<FundData> query(String fundCode) async {
+    String? globalError;
     final session = getSessionLabel();
     final now = DateTime.now();
     final nowStr = DateFormat('HH:mm').format(now);
 
-    final base = await fetchBaseInfo(fundCode);
+    Map<String, dynamic> base;
+    try {
+      base = await fetchBaseInfo(fundCode);
+    } catch (e) {
+      globalError = '获取基本信息失败: $e';
+      base = {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};
+    }
     final fundName = base['fundName'];
     final nav = base['nav'] as String?;
     final navDate = base['navDate'] as String?;
     final actualChange = base['actualChange'] as double?;
 
-    final holdingsRaw = await fetchHoldings(fundCode);
+    List<Map<String, dynamic>> holdingsRaw = [];
+    try {
+      holdingsRaw = await fetchHoldings(fundCode);
+    } catch (e) {
+      if (globalError == null) globalError = '获取持仓失败: $e';
+    }
+
     List<StockHolding> holdings = [];
     double totalPct = 0;
     double weightedChange = 0;
+    int successCount = 0;
     if (holdingsRaw.isNotEmpty) {
-      final changes = await Future.wait(holdingsRaw.map((h) => fetchStockChange(h['code'])));
-      for (int i = 0; i < holdingsRaw.length; i++) {
-        final h = holdingsRaw[i];
+      for (var h in holdingsRaw) {
         final pct = h['pct'] as double;
-        final change = changes[i];
         totalPct += pct;
-        weightedChange += pct * change;
-        holdings.add(StockHolding(name: h['name'], code: h['code'], pct: pct, change: change));
+        final code = h['code'];
+        double? change;
+        String? errMsg;
+        try {
+          change = await fetchStockChange(code);
+          if (change == null) errMsg = '获取失败';
+        } catch (e) {
+          errMsg = e.toString();
+        }
+        if (change != null) {
+          weightedChange += pct * change;
+          successCount++;
+        }
+        holdings.add(StockHolding(
+          name: h['name'],
+          code: code,
+          pct: pct,
+          change: change,
+          errorMsg: errMsg,
+        ));
       }
     }
-    double estimatedChange = totalPct > 0 ? weightedChange / 100.0 : 0.0;
+    double estimatedChange = (totalPct > 0 && successCount > 0) ? weightedChange / 100.0 : 0.0;
     estimatedChange = double.parse(estimatedChange.toStringAsFixed(2));
 
     final navIsToday = isSameDay(navDate);
+    FundData fundData;
     if (session == '交易中' || session == '午休') {
-      return FundData(
+      fundData = FundData(
         fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
         estimatedChange: estimatedChange,
         estimatedNav: nav != null ? double.parse(nav) * (1 + estimatedChange / 100) : null,
         actualChange: null, isFinal: false,
         holdings: holdings, totalPct: totalPct,
         updateTime: nowStr, status: session,
+        networkError: globalError,
       );
     } else if (session == '已收盘') {
       if (navIsToday && actualChange != null) {
-        return FundData(
+        fundData = FundData(
           fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
           estimatedChange: actualChange, estimatedNav: null, actualChange: actualChange,
           isFinal: true, holdings: holdings, totalPct: totalPct,
           updateTime: nowStr, status: '已收盘（最终）',
+          networkError: globalError,
         );
       } else {
-        return FundData(
+        fundData = FundData(
           fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
           estimatedChange: estimatedChange,
           estimatedNav: nav != null ? double.parse(nav) * (1 + estimatedChange / 100) : null,
           actualChange: null, isFinal: false,
           holdings: holdings, totalPct: totalPct,
           updateTime: nowStr, status: '待公布净值',
+          networkError: globalError,
         );
       }
     } else {
       final change = actualChange ?? 0.0;
       final finalStatus = actualChange != null ? '上交易日' : session;
-      return FundData(
+      fundData = FundData(
         fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
         estimatedChange: change, estimatedNav: null, actualChange: actualChange,
         isFinal: true, holdings: holdings, totalPct: totalPct,
         updateTime: nowStr, status: finalStatus,
+        networkError: globalError,
       );
     }
+    return fundData;
   }
 }
 
-// ---------- UI ----------
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
@@ -360,6 +388,13 @@ class _HomePageState extends State<HomePage> {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (d.networkError != null)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(8),
+            color: Colors.red.shade100,
+            child: Text('⚠️ 网络异常: ${d.networkError}', style: const TextStyle(color: Colors.red)),
+          ),
         Text('${d.fundName} (${d.fundCode})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         if (d.nav != null) Text('单位净值: ${d.nav} (${d.navDate ?? "--"})', style: const TextStyle(fontSize: 14)),
@@ -380,8 +415,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildStockRow(StockHolding s) {
-    final color = s.change >= 0 ? kRedUp : kGreenDown;
-    final sign = s.change >= 0 ? '+' : '';
+    // 如果涨跌幅为 null 或获取失败，显示 "--" 和错误图标
+    bool hasError = s.change == null;
+    double changeVal = s.change ?? 0.0;
+    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
+    final sign = (!hasError && changeVal >= 0) ? '+' : '';
+    final displayText = hasError ? '--' : '$sign${changeVal.toStringAsFixed(2)}%';
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
@@ -390,7 +429,15 @@ class _HomePageState extends State<HomePage> {
         Expanded(flex: 3, child: Text(s.name, style: const TextStyle(fontSize: 14))),
         SizedBox(width: 50, child: Text('${s.pct.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 13, color: kTextMuted), textAlign: TextAlign.right)),
         const SizedBox(width: 8),
-        SizedBox(width: 70, child: Text('$sign${s.change.toStringAsFixed(2)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color), textAlign: TextAlign.right)),
+        SizedBox(
+          width: 70,
+          child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            if (hasError)
+              Icon(Icons.error_outline, size: 14, color: Colors.orange)
+            else
+              Text(displayText, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+          ]),
+        ),
       ]),
     );
   }
