@@ -70,17 +70,27 @@ class FundData {
 // ---------- API ----------
 class FundApi {
   static const _timeout = Duration(seconds: 15);
-  static const _ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
-  /// 统一请求：先 HTTPS 再 HTTP
-  static Future<String> _get(String url, {Map<String, String>? headers}) async {
-    headers ??= {
-      'User-Agent': _ua,
-      'Referer': 'https://fund.eastmoney.com/',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    };
-    for (var s in ['https', 'http']) {
-      final u = url.replaceFirst(RegExp(r'^https?://'), '$s://');
+  /// 完整浏览器头 — 跟你之前说有持仓数据的那版一致
+  static Map<String, String> _headers() => {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Referer': 'https://fund.eastmoney.com/',
+    'Connection': 'keep-alive',
+    'Accept-Encoding': 'gzip, deflate',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+  };
+
+  /// 统一 GET 请求，优先原协议
+  static Future<String> _get(String url) async {
+    final headers = _headers();
+    final uris = [url];
+    if (url.startsWith('https://')) uris.add(url.replaceFirst('https://', 'http://'));
+    else if (url.startsWith('http://')) uris.add(url.replaceFirst('http://', 'https://'));
+
+    for (final u in uris) {
       try {
         final c = HttpClient()..connectionTimeout = _timeout..badCertificateCallback = (cert, host, port) => true;
         try {
@@ -111,9 +121,9 @@ class FundApi {
   static bool _isSameDay(String? dateStr) {
     if (dateStr == null || dateStr.isEmpty) return false;
     try {
-      final parts = dateStr.split('-');
-      if (parts.length < 3) return false;
-      final d = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+      final p = dateStr.split('-');
+      if (p.length < 3) return false;
+      final d = DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
       final now = DateTime.now();
       return d.year == now.year && d.month == now.month && d.day == now.day;
     } catch (_) { return false; }
@@ -131,25 +141,46 @@ class FundApi {
       if (parts.length > 31) {
         return double.tryParse(parts[31].trim()) ?? 0.0;
       }
-    } catch (e) { print('获取股票 $stockCode 涨跌幅失败: $e'); }
+    } catch (_) {}
     return 0.0;
   }
 
-  // ----- 前十大持仓（天天基金）-----
+  // ----- 前十大持仓（天天基金 fundf10）-----
   static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {
-    final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';
     try {
-      final body = await _get(url);
+      final body = await _get('http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10');
       final cm = RegExp(r'content:"([^"]+)"').firstMatch(body);
       if (cm == null) return [];
-      final rows = RegExp(
-        r'<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class="tor">([\d\.]+)%',
-        dotAll: true,
-      ).allMatches(cm.group(1)!);
-      return rows.map((m) => <String, dynamic>{
-        'code': m.group(1)!, 'name': m.group(2)!.trim(), 'pct': double.parse(m.group(3)!),
-      }).toList();
-    } catch (e) { print('获取持仓失败 $fundCode: $e'); return []; }
+      // 逐行解析 HTML 表格
+      final html = cm.group(1)!;
+      final results = <Map<String, dynamic>>[];
+      // 匹配每一个 <tr>...</tr> 行
+      final trPattern = RegExp(r'<tr[^>]*>(.*?)</tr>', dotAll: true);
+      final trMatches = trPattern.allMatches(html);
+      for (final tr in trMatches) {
+        final trHtml = tr.group(1)!;
+        // 跳过非数据行（比如表头）
+        if (!trHtml.contains('class="tor"')) continue;
+        // 提取股票代码 <a ...>600036</a>
+        final codeMatch = RegExp(r'<a[^>]*>(\d{6})</a>').firstMatch(trHtml);
+        if (codeMatch == null) continue;
+        // 提取股票名称（第二个 <a>）
+        final nameMatches = RegExp(r'<a[^>]*>([^<]+)</a>').allMatches(trHtml).toList();
+        if (nameMatches.length < 2) continue;
+        // 提取占比 <td class="tor">5.23%</td>
+        final pctMatch = RegExp(r'class="tor"[^>]*>([\d\.]+)%').firstMatch(trHtml);
+        if (pctMatch == null) continue;
+        results.add({
+          'code': codeMatch.group(1)!,
+          'name': nameMatches[1].group(1)!.trim(),
+          'pct': double.parse(pctMatch.group(1)!),
+        });
+      }
+      return results;
+    } catch (e) {
+      print('获取持仓失败 $fundCode: $e');
+      return [];
+    }
   }
 
   // ----- 基金基本信息（天天基金页面）-----
@@ -183,11 +214,12 @@ class FundApi {
     final navDate = base['navDate'] as String?;
     final actualChange = base['actualChange'] as double?;
 
-    // 持仓 + 加权
+    // 持仓 + 加权计算涨跌幅
     final raw = await fetchHoldings(fundCode);
     final holdings = <StockHolding>[];
     double totalPct = 0;
     double weightedChange = 0;
+
     if (raw.isNotEmpty) {
       final changes = await Future.wait(raw.map((h) => fetchStockChange(h['code'])));
       for (int i = 0; i < raw.length; i++) {
@@ -198,15 +230,16 @@ class FundApi {
         holdings.add(StockHolding(name: raw[i]['name'], code: raw[i]['code'], pct: pct, change: change));
       }
     }
+
     double estimatedChange = totalPct > 0 ? weightedChange / 100.0 : 0.0;
     estimatedChange = double.parse(estimatedChange.toStringAsFixed(2));
-
-    final navIsToday = _isSameDay(navDate);
     double? estimatedNav;
     if (nav != null) {
       estimatedNav = double.parse(nav) * (1 + estimatedChange / 100);
       estimatedNav = double.parse(estimatedNav.toStringAsFixed(4));
     }
+
+    final navIsToday = _isSameDay(navDate);
 
     if (session == '交易中' || session == '午休') {
       return FundData(
@@ -237,7 +270,7 @@ class FundApi {
           updateTime: nowStr, status: '待公布净值',
         );
       }
-    } else {
+    } else { // 未开市/休市
       final change = actualChange ?? 0.0;
       final finalStatus = actualChange != null ? '上交易日' : session;
       return FundData(
