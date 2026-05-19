@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:html/parser.dart' as html_parser;
+import 'package:intl/intl.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,33 +28,36 @@ class FundApp extends StatelessWidget {
   }
 }
 
+// ---------- 颜色常量 ----------
 const Color kRedUp = Color(0xFFEF4444);
 const Color kGreenDown = Color(0xFF10B981);
 const Color kTextMuted = Color(0xFF64748B);
 const Color kCardBg = Color(0xFFFFFFFF);
 const Color kBorder = Color(0xFFE2E8F0);
 
+// ---------- 数据模型 ----------
 class StockHolding {
   final String name;
   final String code;
-  final double pct;
-  final double change;
+  final double pct; // 占净值比例 (%)
+  final double change; // 实时涨跌幅 (%)
   StockHolding({required this.name, required this.code, required this.pct, required this.change});
 }
 
 class FundData {
   final String fundName;
   final String fundCode;
-  final String? nav;
-  final String? navDate;
-  final double estimatedChange;
-  final double? estimatedNav;
-  final double? actualChange;
+  final String? nav; // 最新单位净值
+  final String? navDate; // 净值日期
+  final double estimatedChange; // 估算涨跌幅 (%)
+  final double? estimatedNav; // 估算净值
+  final double? actualChange; // 实际涨跌幅 (已公布时)
   final bool isFinal;
   final List<StockHolding> holdings;
   final double totalPct;
   final String updateTime;
   final String status;
+
   FundData({
     required this.fundName,
     required this.fundCode,
@@ -70,10 +74,12 @@ class FundData {
   });
 }
 
+// ---------- API 服务 ----------
 class FundApi {
   static const _timeout = Duration(seconds: 15);
   static const _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
+  /// 统一网络请求：自动降级 http/https，忽略证书错误（仅用于调试）
   static Future<String> _get(String url, {Map<String, String>? headers}) async {
     headers ??= {
       'User-Agent': _userAgent,
@@ -102,6 +108,7 @@ class FundApi {
     throw Exception('网络请求失败: $url');
   }
 
+  /// 交易时段判断
   static String getSessionLabel() {
     final now = DateTime.now();
     if (now.weekday > 5) return '休市';
@@ -116,15 +123,13 @@ class FundApi {
   static bool isSameDay(String? dateStr) {
     if (dateStr == null || dateStr.isEmpty) return false;
     try {
-      final parts = dateStr.split('-');
-      if (parts.length < 3) return false;
-      final parsed = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+      final parsed = DateFormat('yyyy-MM-dd').parseStrict(dateStr);
       final now = DateTime.now();
       return parsed.year == now.year && parsed.month == now.month && parsed.day == now.day;
     } catch (_) { return false; }
   }
 
-  // 腾讯个股涨跌幅
+  /// 腾讯个股涨跌幅（增强版，支持多字段索引）
   static Future<double> fetchStockChange(String stockCode) async {
     String prefix;
     if (stockCode.startsWith('6')) prefix = 'sh';
@@ -135,31 +140,35 @@ class FundApi {
       final body = await _get(url);
       final parts = body.split('~');
       if (parts.length > 31) {
-        final changeStr = parts[31].trim();
-        return double.tryParse(changeStr) ?? 0.0;
+        // 尝试多个可能包含涨跌幅的位置（31 或 32）
+        for (int idx in [31, 32]) {
+          if (parts.length > idx) {
+            final raw = parts[idx].trim().replaceAll('%', '');
+            if (raw.isNotEmpty && raw != '--') {
+              final val = double.tryParse(raw);
+              if (val != null) return val;
+            }
+          }
+        }
       }
+      return 0.0;
     } catch (e) {
       print('获取股票 $stockCode 涨跌幅失败: $e');
+      return 0.0;
     }
-    return 0.0;
   }
 
-  // 天天基金持仓（正则 + html fallback）
+  /// 天天基金持仓（使用正则，与 Python 版一致）
   static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {
     final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';
     try {
       final body = await _get(url);
       final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);
-      if (contentMatch == null) {
-        print('未找到 content 字段');
-        return [];
-      }
+      if (contentMatch == null) return [];
       String content = contentMatch.group(1)!;
       // 解码 HTML 实体
       content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
-
-      // 方法1：正则（与 Python 版相同）
-      // 使用三引号字符串避免 Dart raw 字符串中 \' 的转义问题
+      // 正则与 Python 版一致
       const pattern = '''<tr.*?><td.*?>\\d+</td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\\d\\.]+)%''';
       final reg = RegExp(pattern, dotAll: true);
       final matches = reg.allMatches(content);
@@ -172,40 +181,14 @@ class FundApi {
           holdings.add({'code': code, 'name': name, 'pct': pct});
         }
       }
-      if (holdings.isNotEmpty) {
-        print('正则解析到 ${holdings.length} 条持仓');
-        return holdings;
-      }
-
-      // 方法2：html 包 fallback
-      final document = html_parser.parse(content);
-      final rows = document.querySelectorAll('table tr');
-      for (var row in rows) {
-        final cells = row.querySelectorAll('td');
-        if (cells.length >= 4) {
-          final codeLink = cells[1].querySelector('a');
-          final nameLink = cells[2].querySelector('a');
-          final pctCell = cells[3];
-          if (codeLink != null && nameLink != null && pctCell != null) {
-            String code = codeLink.text.trim();
-            String name = nameLink.text.trim();
-            String pctStr = pctCell.text.trim().replaceAll('%', '');
-            double pct = double.tryParse(pctStr) ?? 0.0;
-            if (code.length == 6 && pct > 0) {
-              holdings.add({'code': code, 'name': name, 'pct': pct});
-            }
-          }
-        }
-      }
-      print('DOM 解析到 ${holdings.length} 条持仓');
       return holdings;
     } catch (e) {
-      print('持仓解析异常: $e');
+      print('持仓解析失败: $e');
       return [];
     }
   }
 
-  // 天天基金基本信息（名称、净值、实际涨跌幅）
+  /// 天天基金基本信息（名称、净值、实际涨跌幅）
   static Future<Map<String, dynamic>> fetchBaseInfo(String fundCode) async {
     final url = 'https://fund.eastmoney.com/$fundCode.html';
     try {
@@ -234,10 +217,11 @@ class FundApi {
     }
   }
 
+  /// 主查询函数
   static Future<FundData> query(String fundCode) async {
     final session = getSessionLabel();
     final now = DateTime.now();
-    final nowStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final nowStr = DateFormat('HH:mm').format(now);
 
     final base = await fetchBaseInfo(fundCode);
     final fundName = base['fundName'];
@@ -304,6 +288,7 @@ class FundApi {
   }
 }
 
+// ---------- UI ----------
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
