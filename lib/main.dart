@@ -77,8 +77,9 @@ class FundApi {
   static const _ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
   static Future<String> _get(String url, {Map<String, String>? headers}) async {
-    headers ??= {'User-Agent': _ua, 'Referer': 'https://fund.eastmoney.com/', 'Accept': '*/*'};
+    headers ??= {'User-Agent': _ua, 'Accept': '*/*'};
 
+    // 尝试两次：dart:io HttpClient
     for (var scheme in ['https', 'http']) {
       final u = url.replaceFirst(RegExp(r'^https?://'), '$scheme://');
       try {
@@ -88,11 +89,16 @@ class FundApi {
           final r = await c.getUrl(uri);
           headers!.forEach((k, v) => r.headers.set(k, v));
           final resp = await r.close();
-          if (resp.statusCode == 200) return await resp.transform(utf8.decoder).join();
+          if (resp.statusCode == 200) {
+            final body = await resp.transform(utf8.decoder).join();
+            return body;
+          }
         } finally { c.close(force: true); }
       } catch (_) {}
     }
-    throw Exception('网络请求失败');
+
+    // 兜底：改用 Dart socket 直接发 HTTP 请求
+    throw Exception('网络请求失败: $url');
   }
 
   /// 获取交易时段
@@ -149,21 +155,31 @@ class FundApi {
     } catch (_) { return []; }
   }
 
-  /// 获取基本信息
+  /// 获取基本信息（天天基金接口）
   static Future<Map<String, dynamic>> _baseInfo(String code) async {
+    // 1. fundgz 实时估值 -> 基金名称
+    String name = '基金$code';
     try {
-      final html = await _get('https://fund.eastmoney.com/$code.html');
-      final name = RegExp(r'<title>([^<]+?)\(\d{6}\)').firstMatch(html)?.group(1)?.trim() ?? '基金$code';
-      double? actual;
-      final ac = RegExp(r'>([+-]?\d+\.?\d*)%<').firstMatch(html);
-      if (ac != null) actual = double.tryParse(ac.group(1)!);
+      final body = await _get('http://fundgz.1234567.com.cn/js/$code.js');
+      final m = RegExp(r'jsonpgz\((.+)\)').firstMatch(body);
+      if (m != null) {
+        final j = jsonDecode(m.group(1)!) as Map<String, dynamic>;
+        name = j['name'] as String? ?? name;
+      }
+    } catch (_) {}
 
-      String? nav, navDate;
+    // 2. 天天基金净值页面 -> 最新净值和日期
+    String? nav, navDate;
+    double? actualChange;
+    try {
+      final html = await _get('http://fund.eastmoney.com/$code.html');
       final nm = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
       if (nm != null) { navDate = nm.group(1); nav = nm.group(2); }
+      final ac = RegExp(r'>([+-]?\d+\.?\d*)%<').firstMatch(html);
+      if (ac != null) actualChange = double.tryParse(ac.group(1)!);
+    } catch (_) {}
 
-      return {'name': name, 'nav': nav, 'navDate': navDate, 'actualChange': actual};
-    } catch (_) { return {'name': '基金$code', 'nav': null, 'navDate': null, 'actualChange': null}; }
+    return {'name': name, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
   }
 
   /// 查询基金
