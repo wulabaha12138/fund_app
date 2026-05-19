@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -167,11 +167,9 @@ class FundApi {
       String content = contentMatch.group(1)!;
       // 解码常见 HTML 实体
       content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
-      // 与 Python 版完全一致的正则（注意 Dart 原始字符串的写法）
-      final reg = RegExp(
-        r'<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=[\'"]tor[\'"]>([\d\.]+)%',
-        dotAll: true,
-      );
+      // 与 Python 版完全一致的正则
+      const pattern = '''<tr.*?><td.*?>\\d+</td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\\d\\.]+)%''';
+      final reg = RegExp(pattern, dotAll: true);
       final matches = reg.allMatches(content);
       final holdings = <Map<String, dynamic>>[];
       for (final m in matches) {
@@ -445,3 +443,4 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
