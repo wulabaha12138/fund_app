@@ -452,7 +452,7 @@ class _HomePageState extends State<HomePage> {
   void _addFromBar() {
     final code = _codeCtrl.text.trim();
     if (code.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
+      ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
       return;
     }
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0.0;
@@ -829,57 +829,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildStockChange(StockHolding s) {
-    bool hasError = s.change == null;
-    double changeVal = s.change ?? 0.0;
-    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
-    final sign = (!hasError && changeVal >= 0) ? '+' : '';
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        if (hasError)
-          Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 14, color: Colors.orange))
-        else
-          Text('"$sign${changeVal.toStringAsFixed(2)}%"',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-      ],
-    );
-  }
-    bool hasError = s.change == null;
-    double changeVal = s.change ?? 0.0;
-    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
-    final sign = (!hasError && changeVal >= 0) ? '+' : '';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: kBorder),
-      ),
-      child: Row(
-        children: [
-          Expanded(flex: 2, child: Text(s.name, style: const TextStyle(fontSize: 13))),
-          Text('${s.pct.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 12, color: kTextMuted)),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 70,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (hasError)
-                  Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 14, color: Colors.orange))
-                else
-                  Text('$sign${changeVal.toStringAsFixed(2)}%',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-    String _earningsText(double amount, double change) {
+String _earningsText(double amount, double change) {
     final earnings = amount * change / 100;
     final sign = earnings >= 0 ? '+' : '';
     return '收益 ' + sign + earnings.toStringAsFixed(2);
