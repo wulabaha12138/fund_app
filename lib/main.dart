@@ -429,7 +429,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<bool> _querySingle(String code) async {
+  Future<void> _querySingle(String code) async {
     if (_loading[code] == true) return;
     setState(() => _loading[code] = true);
     try {
@@ -496,17 +496,17 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          TextButton(onPressed: () {
+          TextButton(onPressed: () async {
             final amt = double.tryParse(ctrl.text.trim()) ?? 0;
             Navigator.pop(ctx);
             if (amt > 0) {
-              setState(() {
-                final idx = _savedFunds.indexWhere((f) => f.code == code);
-                if (idx >= 0) {
+              final idx = _savedFunds.indexWhere((f) => f.code == code);
+              if (idx >= 0) {
+                setState(() {
                   _savedFunds[idx] = SavedFund(code: code, amount: amt);
-                  await FundStore.save(_savedFunds);
-                }
-              });
+                });
+                await FundStore.save(_savedFunds);
+              }
               if (_results[code] != null) _querySingle(code);
             }
           }, child: const Text('确定')),
@@ -914,52 +914,6 @@ class _HomePageState extends State<HomePage> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           TextButton(onPressed: () { Navigator.pop(ctx); _deleteFund(code); }, child: const Text('确定', style: TextStyle(color: kRedUp))),
-        ],
-      ),
-    );
-  }
-
-  void _showAddDialog() {
-    final codeCtrl = TextEditingController();
-    final amountCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('添加基金'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: codeCtrl,
-              decoration: const InputDecoration(labelText: '基金代码', border: OutlineInputBorder(), isDense: true),
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              maxLength: 6,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: amountCtrl,
-              decoration: const InputDecoration(labelText: '持有金额（元，可选）', border: OutlineInputBorder(), isDense: true),
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          TextButton(
-            onPressed: () {
-              final code = codeCtrl.text.trim();
-              if (code.length != 6) {
-                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
-                return;
-              }
-              final amount = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
-              Navigator.pop(ctx);
-              _addFund(code, amount);
-            },
-            child: const Text('添加'),
-          ),
         ],
       ),
     );
