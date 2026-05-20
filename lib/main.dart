@@ -647,12 +647,11 @@ class _HomePageState extends State<HomePage> {
                     ],
                     const Spacer(),
                     // 预估收益
-                    if (saved.amount > 0) ...[
-                                           Text(
+                    if (saved.amount > 0)
+                      Text(
                         _earningsText(saved.amount, data.estimatedChange),
                         style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),
                       ),
-                                      ],
                 ),
                 if (saved.amount > 0)
                   Padding(
