@@ -811,13 +811,13 @@ class _HomePageState extends State<HomePage> {
         children: [
           SizedBox(
             width: 20,
-            child: Text('"$index"', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+            child: Text('$index', style: const TextStyle(fontSize: 12, color: kTextMuted)),
           ),
           Expanded(
             flex: 2,
             child: Text(s.name, style: const TextStyle(fontSize: 13)),
           ),
-          Text('"${s.pct.toStringAsFixed(1)}%"', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+          Text('${s.pct.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 12, color: kTextMuted)),
           const SizedBox(width: 8),
           SizedBox(
             width: 70,
@@ -869,3 +869,4 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+}
