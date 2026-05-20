@@ -175,13 +175,26 @@ class FundApi {
         }
       }
       if (start < bytes.length) parts.add(utf8.decode(bytes.sublist(start), allowMalformed: true));
-      for (int idx in [31, 32, 33]) {
+      // Tencent stock quote format (0-indexed):
+      // 0:market,1:name,2:code,3:price,4:yestClose,5:open,6:volume, ...
+      // Actually the change percentage (涨跌幅) is at index 32 (the third-to-last 百分比字段)
+      // Let's try multiple known positions: 32 is the standard change% for stocks
+      // Other known formats use index 3 for price, 32 for change%, so try 32 first
+      for (int idx in [32, 31, 33, 3]) {
         if (parts.length > idx) {
           String raw = parts[idx].trim().replaceAll('%', '');
-          if (raw.isNotEmpty && raw != '--') {
+          if (raw.isNotEmpty && raw != '--' && raw != '0.00') {
             final val = double.tryParse(raw);
-            if (val != null) return val;
+            if (val != null && val.abs() < 100) return val;
           }
+        }
+      }
+      // Last resort: find any field that looks like a stock change
+      for (int i = 3; i < parts.length && i < 40; i++) {
+        String raw = parts[i].trim().replaceAll('%', '');
+        if (raw.isNotEmpty && raw != '--') {
+          final val = double.tryParse(raw);
+          if (val != null && val.abs() > 0.01 && val.abs() < 30) return val;
         }
       }
       return null;
@@ -374,6 +387,8 @@ class _HomePageState extends State<HomePage> {
   Map<String, FundData?> _results = {};
   Map<String, bool> _loading = {};
   Map<String, bool> _expanded = {};
+  final _codeCtrl = TextEditingController();
+  final _amountCtrl = TextEditingController();
   Timer? _autoRefreshTimer;
   bool _initialLoading = false;
 
@@ -387,6 +402,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _autoRefreshTimer?.cancel();
+    _codeCtrl.dispose();
+    _amountCtrl.dispose();
     super.dispose();
   }
 
@@ -430,6 +447,18 @@ class _HomePageState extends State<HomePage> {
         _loading[code] = false;
       });
     }
+  }
+
+  void _addFromBar() {
+    final code = _codeCtrl.text.trim();
+    if (code.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
+      return;
+    }
+    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0.0;
+    _codeCtrl.clear();
+    _amountCtrl.clear();
+    _addFund(code, amount);
   }
 
   Future<void> _addFund(String code, double amount) async {
@@ -530,49 +559,105 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('基金净值预估'),
         centerTitle: false,
-        actions: [
-          if (_savedFunds.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep),
-              tooltip: '清空所有',
-              onPressed: _clearAll,
-            ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: '手动刷新',
-            onPressed: _savedFunds.isNotEmpty ? _refreshAll : null,
-          ),
-        ],
+
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddDialog,
-        child: const Icon(Icons.add),
-      ),
+
       body: _buildBody(),
     );
   }
 
   Widget _buildBody() {
-    if (_savedFunds.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.account_balance, size: 64, color: kTextMuted),
-            SizedBox(height: 16),
-            Text('点击右下角 + 添加基金', style: TextStyle(color: kTextMuted, fontSize: 16)),
-          ],
+    return Column(
+      children: [
+        // Top input bar
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: kBorder)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: SizedBox(
+                  height: 40,
+                  child: TextField(
+                    controller: _codeCtrl,
+                    decoration: const InputDecoration(
+                      hintText: '基金代码',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    maxLength: 6,
+                    buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: SizedBox(
+                  height: 40,
+                  child: TextField(
+                    controller: _amountCtrl,
+                    decoration: const InputDecoration(
+                      hintText: '金额(元)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.add, color: Colors.white),
+                  onPressed: _addFromBar,
+                  tooltip: '添加基金',
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+              if (_savedFunds.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 22),
+                  tooltip: '刷新',
+                  onPressed: _refreshAll,
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  padding: EdgeInsets.zero,
+                ),
+              ],
+            ],
+          ),
         ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: () async => _refreshAll(),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: _savedFunds.length,
-        itemBuilder: (ctx, i) => _buildFundCard(_savedFunds[i]),
-      ),
+        // Fund list
+        Expanded(
+          child: _savedFunds.isEmpty
+              ? const Center(
+                  child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)),
+                )
+              : RefreshIndicator(
+                  onRefresh: () async => _refreshAll(),
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+                    itemCount: _savedFunds.length,
+                    itemBuilder: (ctx, i) => _buildFundCard(_savedFunds[i]),
+                  ),
+                ),
+        ),
+      ],
     );
   }
 
@@ -677,7 +762,7 @@ class _HomePageState extends State<HomePage> {
                   if (data.holdings.isEmpty)
                     const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))
                   else
-                    ...data.holdings.map((h) => _buildStockRow(h)),
+                    ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
                 ],
               ]
               else ...[                const Padding(
@@ -719,7 +804,46 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildStockRow(StockHolding s) {
+  Widget _buildStockRow(int index, StockHolding s) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 20,
+            child: Text('"$index"', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(s.name, style: const TextStyle(fontSize: 13)),
+          ),
+          Text('"${s.pct.toStringAsFixed(1)}%"', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 70,
+            child: _buildStockChange(s),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStockChange(StockHolding s) {
+    bool hasError = s.change == null;
+    double changeVal = s.change ?? 0.0;
+    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
+    final sign = (!hasError && changeVal >= 0) ? '+' : '';
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        if (hasError)
+          Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 14, color: Colors.orange))
+        else
+          Text('"$sign${changeVal.toStringAsFixed(2)}%"',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
     bool hasError = s.change == null;
     double changeVal = s.change ?? 0.0;
     final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
