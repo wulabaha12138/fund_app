@@ -638,7 +638,7 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                                Row(
+                                                Row(
                   children: [
                     _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
                     if (data.estimatedNav != null) ...[
