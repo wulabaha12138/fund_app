@@ -1,4 +1,5 @@
 plugins {
+    id "com.google.gms.google-services" version "4.3.15" apply false
     id "com.android.application"
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
@@ -23,6 +24,7 @@ if (flutterVersionName == null) {
 }
 
 android {
+    ndkVersion "25.1.8937393"
     ndkVersion "25.1.8937393"
     namespace "com.wulabaha.fund_app"
     compileSdk flutter.compileSdkVersion
