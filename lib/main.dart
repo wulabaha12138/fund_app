@@ -760,7 +760,8 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ],
               ),
-              if (data != null) ...[                const SizedBox(height: 8),
+              if (data != null) ...[
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     if (data.nav != null)
@@ -809,7 +810,8 @@ class _HomePageState extends State<HomePage> {
                     ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
                 ],
               ]
-              else ...[                const Padding(
+              else ...[
+                const Padding(
                   padding: EdgeInsets.only(top: 8),
                   child: Text('点击加载', style: TextStyle(color: kTextMuted)),
                 ),
@@ -829,7 +831,9 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
-  }Widget _changeWidget(double change, String label) {
+  }
+
+  Widget _changeWidget(double change, String label) {
     final color = change >= 0 ? kRedUp : kGreenDown;
     final sign = change >= 0 ? '+' : '';
     return Row(
@@ -894,5 +898,70 @@ class _HomePageState extends State<HomePage> {
     final sign = earnings >= 0 ? '+' : '';
     return '收益 ' + sign + earnings.toStringAsFixed(2);
   }
-  @override
+
+
+  Color _earningsColor2(double amount, double change) {
+    final earnings = amount * change / 100;
+    return earnings >= 0 ? kRedUp : kGreenDown;
+  }
+
+  void _showDeleteConfirm(String code) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除基金'),
+        content: Text('确定删除基金 ' + code + ' 吗?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(onPressed: () { Navigator.pop(ctx); _deleteFund(code); }, child: const Text('确定', style: TextStyle(color: kRedUp))),
+        ],
+      ),
+    );
+  }
+
+  void _showAddDialog() {
+    final codeCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('添加基金'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeCtrl,
+              decoration: const InputDecoration(labelText: '基金代码', border: OutlineInputBorder(), isDense: true),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              maxLength: 6,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountCtrl,
+              decoration: const InputDecoration(labelText: '持有金额（元，可选）', border: OutlineInputBorder(), isDense: true),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () {
+              final code = codeCtrl.text.trim();
+              if (code.length != 6) {
+                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
+                return;
+              }
+              final amount = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+              Navigator.pop(ctx);
+              _addFund(code, amount);
+            },
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
+  }
 }
