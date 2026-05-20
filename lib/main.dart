@@ -918,7 +918,6 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
-    );
   }
 
   Widget _changeWidget(double change, String label) {
