@@ -654,7 +654,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('基金净值预估'),
         centerTitle: false,
@@ -773,6 +773,8 @@ class _HomePageState extends State<HomePage> {
     final isExpanded = _expanded[code] ?? false;
     final isSelected = _selectedCodes.contains(code);
 
+    final _session = FundApi.getSessionLabel();
+    final _isMarketHours = _session == '交易中' || _session == '午休';
     // Build earning widget
     final isFinalValue = data != null && data.isFinal && data.nav != null;
     Widget? earningsWidget;
@@ -837,14 +839,13 @@ class _HomePageState extends State<HomePage> {
                     ),
                     if (isLoading)
                       const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                    PopupMenuButton<String>(
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(color: kRedUp))),
-                      ],
-                      onSelected: (v) {
-                        if (v == 'delete') _showDeleteConfirm(code);
-                      },
-                    ),
+                    if (!_selectionMode)
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                        onPressed: () => _showDeleteConfirm(code),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      ),
                   ],
                 ),
                 if (data != null) ...[
@@ -860,13 +861,16 @@ class _HomePageState extends State<HomePage> {
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
-                      if (data.estimatedNav != null) ...[
+                      if (_isMarketHours || data.isFinal)
+                        _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
+                      else
+                        Text('--', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: kTextMuted)),
+                      if (_isMarketHours && data.estimatedNav != null) ...[
                         const SizedBox(width: 12),
                         Text('≈ ${data.estimatedNav!.toStringAsFixed(4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),
                       ],
                       const Spacer(),
-                      if (earningsWidget != null) earningsWidget,
+                      if (_isMarketHours && earningsWidget != null) earningsWidget,
                     ],
                   ),
                   if (saved.amount > 0)
