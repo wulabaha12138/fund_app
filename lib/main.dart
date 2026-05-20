@@ -576,11 +576,20 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildFundCard(SavedFund saved) {
+    Widget _buildFundCard(SavedFund saved) {
     final code = saved.code;
     final data = _results[code];
     final isLoading = _loading[code] == true;
     final isExpanded = _expanded[code] ?? false;
+
+    // Build earning widget
+    Widget? earningsWidget;
+    if (saved.amount > 0 && data != null) {
+      earningsWidget = Text(
+        _earningsText(saved.amount, data.estimatedChange),
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),
+      );
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -596,7 +605,7 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 头部：基金名称 + 删除
+              // Header: fund name + delete
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -625,10 +634,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ],
               ),
-
-              // 净值 + 涨跌幅 + 预估收益
-              if (data != null) ...[
-                const SizedBox(height: 8),
+              if (data != null) ...[                const SizedBox(height: 8),
                 Row(
                   children: [
                     if (data.nav != null)
@@ -638,7 +644,7 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                                                Row(
+                Row(
                   children: [
                     _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
                     if (data.estimatedNav != null) ...[
@@ -646,22 +652,44 @@ class _HomePageState extends State<HomePage> {
                       Text('≈ ${data.estimatedNav!.toStringAsFixed(4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),
                     ],
                     const Spacer(),
-                    if (saved.amount > 0)
-                      Text(
-                        _earningsText(saved.amount, data.estimatedChange),
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),
-                      ),
+                    if (earningsWidget != null) earningsWidget,
                   ],
                 ),
-
-                // 错误提示
+                if (saved.amount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text('持有 ${saved.amount.toStringAsFixed(0)} 元', style: const TextStyle(fontSize: 11, color: kTextMuted)),
+                  ),
+                const Divider(height: 20),
+                InkWell(
+                  onTap: () => setState(() => _expanded[code] = !isExpanded),
+                  child: Row(
+                    children: [
+                      Text('前十大持仓 (${data.totalPct.toStringAsFixed(1)}%)',
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                      const Spacer(),
+                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 20, color: kTextMuted),
+                    ],
+                  ),
+                ),
+                if (isExpanded) ...[
+                  const SizedBox(height: 8),
+                  if (data.holdings.isEmpty)
+                    const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))
+                  else
+                    ...data.holdings.map((h) => _buildStockRow(h)),
+                ],
+              ]
+              else ...[                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('点击加载', style: TextStyle(color: kTextMuted)),
+                ),
+              ],
               if (data?.networkError != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 11, color: Colors.orange)),
                 ),
-
-                // 更新时间
               if (data != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
@@ -672,9 +700,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
-  }
-
-  Widget _changeWidget(double change, String label) {
+  }Widget _changeWidget(double change, String label) {
     final color = change >= 0 ? kRedUp : kGreenDown;
     final sign = change >= 0 ? '+' : '';
     return Row(
