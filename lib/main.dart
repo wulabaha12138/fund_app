@@ -654,14 +654,14 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
 
-              // 错误提示
+                // 错误提示
               if (data?.networkError != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 11, color: Colors.orange)),
                 ),
 
-              // 更新时间
+                // 更新时间
               if (data != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
