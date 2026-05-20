@@ -791,135 +791,133 @@ class _HomePageState extends State<HomePage> {
         });
       },
       child: Card(
-      margin: const EdgeInsets.only(bottom: 12),
+        margin: const EdgeInsets.only(bottom: 12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: isSelected ? const BorderSide(color: kRedUp, width: 2) : BorderSide.none,
         ),
-      elevation: 1,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () {
-          if (_selectionMode) {
-            setState(() {
-              if (_selectedCodes.contains(code)) {
-                _selectedCodes.remove(code);
-                if (_selectedCodes.isEmpty) _selectionMode = false;
-              } else {
-                _selectedCodes.add(code);
-              }
-            });
-          } else if (data == null && !isLoading) {
-            _querySingle(code);
-          }
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header: fund name + delete
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+        elevation: 1,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            if (_selectionMode) {
+              setState(() {
+                if (_selectedCodes.contains(code)) {
+                  _selectedCodes.remove(code);
+                  if (_selectedCodes.isEmpty) _selectionMode = false;
+                } else {
+                  _selectedCodes.add(code);
+                }
+              });
+            } else if (data == null && !isLoading) {
+              _querySingle(code);
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header: fund name + delete
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            data?.fundName ?? '查询中…',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(code, style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                        ],
+                      ),
+                    ),
+                    if (isLoading)
+                      const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                    PopupMenuButton<String>(
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(color: kRedUp))),
+                      ],
+                      onSelected: (v) {
+                        if (v == 'delete') _showDeleteConfirm(code);
+                      },
+                    ),
+                  ],
+                ),
+                if (data != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      if (data.nav != null)
+                        Text('净值 ${data.nav!} (${data.navDate ?? "--"})', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                      const Spacer(),
+                      Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
+                      if (data.estimatedNav != null) ...[
+                        const SizedBox(width: 12),
+                        Text('≈ ${data.estimatedNav!.toStringAsFixed(4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                      ],
+                      const Spacer(),
+                      if (earningsWidget != null) earningsWidget,
+                    ],
+                  ),
+                  if (saved.amount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: GestureDetector(
+                        onTap: () => _editAmount(code, saved.amount),
+                        child: Text('持有 ${saved.amount.toStringAsFixed(0)} 元', style: const TextStyle(fontSize: 11, color: kTextMuted)),
+                      ),
+                    ),
+                  const Divider(height: 20),
+                  InkWell(
+                    onTap: () => setState(() => _expanded[code] = !isExpanded),
+                    child: Row(
                       children: [
-                        Text(
-                          data?.fundName ?? '查询中…',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(code, style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                        Text('前十大持仓 (${data.totalPct.toStringAsFixed(1)}%)',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        const Spacer(),
+                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 20, color: kTextMuted),
                       ],
                     ),
                   ),
-                  if (isLoading)
-                    const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                  PopupMenuButton<String>(
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(color: kRedUp))),
-                    ],
-                    onSelected: (v) {
-                      if (v == 'delete') _showDeleteConfirm(code);
-                    },
+                  if (isExpanded) ...[
+                    const SizedBox(height: 8),
+                    if (data.holdings.isEmpty)
+                      const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))
+                    else
+                      ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
+                  ],
+                ] else ...[
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text('点击加载', style: TextStyle(color: kTextMuted)),
                   ),
                 ],
-              ),
-              if (data != null) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    if (data.nav != null)
-                      Text('净值 ${data.nav!} (${data.navDate ?? "--"})', style: const TextStyle(fontSize: 12, color: kTextMuted)),
-                    const Spacer(),
-                    Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
-                    if (data.estimatedNav != null) ...[
-                      const SizedBox(width: 12),
-                      Text('≈ ${data.estimatedNav!.toStringAsFixed(4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),
-                    ],
-                    const Spacer(),
-                    if (earningsWidget != null) earningsWidget,
-                  ],
-                ),
-                if (saved.amount > 0)
+                if (data?.networkError != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: GestureDetector(
-                      onTap: () => _editAmount(code, saved.amount),
-                      child: Text('持有 ${saved.amount.toStringAsFixed(0)} 元', style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                    ),
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 11, color: Colors.orange)),
                   ),
-                const Divider(height: 20),
-                InkWell(
-                  onTap: () => setState(() => _expanded[code] = !isExpanded),
-                  child: Row(
-                    children: [
-                      Text('前十大持仓 (${data.totalPct.toStringAsFixed(1)}%)',
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                      const Spacer(),
-                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 20, color: kTextMuted),
-                    ],
+                if (data != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('${data.updateTime}', style: const TextStyle(fontSize: 10, color: kTextMuted)),
                   ),
-                ),
-                if (isExpanded) ...[
-                  const SizedBox(height: 8),
-                  if (data.holdings.isEmpty)
-                    const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))
-                  else
-                    ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
-                ],
-              ]
-              else ...[
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text('点击加载', style: TextStyle(color: kTextMuted)),
-                ),
               ],
-              if (data?.networkError != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 11, color: Colors.orange)),
-                ),
-              if (data != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('${data.updateTime}', style: const TextStyle(fontSize: 10, color: kTextMuted)),
-                ),
-            ],
+            ),
           ),
         ),
       ),
     );
-  }
-
   Widget _changeWidget(double change, String label) {
     final color = change >= 0 ? kRedUp : kGreenDown;
     final sign = change >= 0 ? '+' : '';
