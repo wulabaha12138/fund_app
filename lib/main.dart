@@ -918,6 +918,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
   Widget _changeWidget(double change, String label) {
     final color = change >= 0 ? kRedUp : kGreenDown;
     final sign = change >= 0 ? '+' : '';
