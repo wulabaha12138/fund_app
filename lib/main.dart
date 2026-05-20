@@ -1,1 +1,1009 @@
-import 'dart:async';\nimport 'dart:convert';\nimport 'dart:typed_data';\nimport 'package:flutter/material.dart';\nimport 'package:flutter/services.dart';\nimport 'package:http/http.dart' as http;\nimport 'package:html/parser.dart' as html_parser;\nimport 'package:intl/intl.dart';\nimport 'package:shared_preferences/shared_preferences.dart';\n\nvoid main() {\n  WidgetsFlutterBinding.ensureInitialized();\n  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);\n  runApp(const FundApp());\n}\n\nclass FundApp extends StatelessWidget {\n  const FundApp({super.key});\n  @override\n  Widget build(BuildContext context) {\n    return MaterialApp(\n      title: '基金净值预估',\n      debugShowCheckedModeBanner: false,\n      theme: ThemeData(\n        colorSchemeSeed: Colors.blue,\n        useMaterial3: true,\n        scaffoldBackgroundColor: const Color(0xFFF1F3F5),\n      ),\n      home: const HomePage(),\n    );\n  }\n}\n\nconst Color kRedUp = Color(0xFFEF4444);\nconst Color kGreenDown = Color(0xFF10B981);\nconst Color kTextMuted = Color(0xFF64748B);\nconst Color kCardBg = Color(0xFFFFFFFF);\nconst Color kBorder = Color(0xFFE2E8F0);\n\n// ---- Models ----\nclass StockHolding {\n  final String name;\n  final String code;\n  final double pct;\n  final double? change;\n  final String? errorMsg;\n  StockHolding({required this.name, required this.code, required this.pct, this.change, this.errorMsg});\n}\n\nclass FundData {\n  final String fundName;\n  final String fundCode;\n  final String? nav;\n  final String? navDate;\n  final double estimatedChange;\n  final double? estimatedNav;\n  final double? actualChange;\n  final bool isFinal;\n  final List<StockHolding> holdings;\n  final double totalPct;\n  final String updateTime;\n  final String status;\n  final String? networkError;\n  FundData({\n    required this.fundName,\n    required this.fundCode,\n    this.nav,\n    this.navDate,\n    required this.estimatedChange,\n    this.estimatedNav,\n    this.actualChange,\n    required this.isFinal,\n    required this.holdings,\n    required this.totalPct,\n    required this.updateTime,\n    required this.status,\n    this.networkError,\n  });\n}\n\n// 持久化存储的基金项\nclass SavedFund {\n  String code;\n  double amount;\n  SavedFund({required this.code, this.amount = 0.0});\n\n  Map<String, dynamic> toJson() => {'code': code, 'amount': amount};\n  factory SavedFund.fromJson(Map<String, dynamic> j) => SavedFund(code: j['code'] as String, amount: (j['amount'] as num).toDouble());\n}\n\n// ---- API ----\nclass FundApi {\n  static const _timeout = Duration(seconds: 20);\n  static const _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';\n\n  static Future<String> _get(String url, {Map<String, String>? headers}) async {\n    headers ??= {\n      'User-Agent': _userAgent,\n      'Referer': 'https://fund.eastmoney.com/',\n      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',\n      'Accept-Language': 'zh-CN,zh;q=0.9',\n      'Accept-Encoding': 'gzip, deflate',\n      'Connection': 'keep-alive',\n    };\n    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');\n    try {\n      final client = http.Client();\n      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);\n      if (response.statusCode == 200) return utf8.decode(response.bodyBytes);\n    } catch (_) {}\n    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');\n    final client = http.Client();\n    try {\n      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);\n      if (response.statusCode == 200) return utf8.decode(response.bodyBytes);\n      throw Exception('HTTP ${response.statusCode}');\n    } finally {\n      client.close();\n    }\n  }\n\n  static Future<Uint8List> _getBytes(String url, {Map<String, String>? headers}) async {\n    headers ??= {'User-Agent': _userAgent, 'Referer': 'https://fund.eastmoney.com/', 'Accept': '*/*'};\n    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');\n    try {\n      final client = http.Client();\n      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);\n      if (response.statusCode == 200) return response.bodyBytes;\n    } catch (_) {}\n    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');\n    final client = http.Client();\n    try {\n      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);\n      if (response.statusCode == 200) return response.bodyBytes;\n      throw Exception('HTTP ${response.statusCode}');\n    } finally {\n      client.close();\n    }\n  }\n\n  static String getSessionLabel() {\n    final now = DateTime.now();\n    if (now.weekday > 5) return '休市';\n    final t = now.hour * 60 + now.minute;\n    if (t < 9 * 60 + 30) return '未开市';\n    if (t <= 11 * 60 + 30) return '交易中';\n    if (t < 13 * 60) return '午休';\n    if (t <= 15 * 60) return '交易中';\n    return '已收盘';\n  }\n\n  static bool isSameDay(String? dateStr) {\n    if (dateStr == null || dateStr.isEmpty) return false;\n    try {\n      final parsed = DateFormat('yyyy-MM-dd').parseStrict(dateStr);\n      final now = DateTime.now();\n      return parsed.year == now.year && parsed.month == now.month && parsed.day == now.day;\n    } catch (_) { return false; }\n  }\n\n  static Future<double?> fetchStockChange(String stockCode) async {\n    String prefix;\n    if (stockCode.startsWith('6')) prefix = 'sh';\n    else if (stockCode.startsWith('8') || stockCode.startsWith('4')) prefix = 'bj';\n    else prefix = 'sz';\n    final url = 'https://qt.gtimg.cn/q=$prefix$stockCode';\n    try {\n      final bytes = await _getBytes(url);\n      final parts = <String>[];\n      int start = 0;\n      for (int i = 0; i < bytes.length; i++) {\n        if (bytes[i] == 0x7E) {\n          parts.add(utf8.decode(bytes.sublist(start, i), allowMalformed: true));\n          start = i + 1;\n        }\n      }\n      if (start < bytes.length) parts.add(utf8.decode(bytes.sublist(start), allowMalformed: true));\n      // Tencent stock quote format (0-indexed):\n      // 0:market,1:name,2:code,3:price,4:yestClose,5:open,6:volume, ...\n      // Actually the change percentage (涨跌幅) is at index 32 (the third-to-last 百分比字段)\n      // Let's try multiple known positions: 32 is the standard change% for stocks\n      // Other known formats use index 3 for price, 32 for change%, so try 32 first\n      for (int idx in [32, 31, 33, 3]) {\n        if (parts.length > idx) {\n          String raw = parts[idx].trim().replaceAll('%', '');\n          if (raw.isNotEmpty && raw != '--' && raw != '0.00') {\n            final val = double.tryParse(raw);\n            if (val != null && val.abs() < 100) return val;\n          }\n        }\n      }\n      // Last resort: find any field that looks like a stock change\n      for (int i = 3; i < parts.length && i < 40; i++) {\n        String raw = parts[i].trim().replaceAll('%', '');\n        if (raw.isNotEmpty && raw != '--') {\n          final val = double.tryParse(raw);\n          if (val != null && val.abs() > 0.01 && val.abs() < 30) return val;\n        }\n      }\n      return null;\n    } catch (e) {\n      throw Exception('$stockCode: $e');\n    }\n  }\n\n  static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {\n    final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';\n    try {\n      final body = await _get(url);\n      final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);\n      if (contentMatch == null) return [];\n      String content = contentMatch.group(1)!;\n      content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');\n      final reg = RegExp(\n        r'''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''',\n        dotAll: true,\n      );\n      final matches = reg.allMatches(content);\n      final holdings = <Map<String, dynamic>>[];\n      for (final m in matches) {\n        final code = m.group(1)!;\n        final name = m.group(2)!.trim();\n        final pct = double.tryParse(m.group(3)!) ?? 0.0;\n        if (code.length == 6 && pct > 0) {\n          holdings.add({'code': code, 'name': name, 'pct': pct});\n        }\n      }\n      return holdings;\n    } catch (e) {\n      return [];\n    }\n  }\n\n  static Future<Map<String, dynamic>> fetchBaseInfo(String fundCode) async {\n    final url = 'https://fund.eastmoney.com/$fundCode.html';\n    try {\n      final html = await _get(url);\n      final nameMatch = RegExp(r'<title>([^<]+?)\(\d{6}\)').firstMatch(html);\n      final fundName = nameMatch?.group(1)?.trim() ?? '基金$fundCode';\n      String? nav, navDate;\n      final navMatch = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);\n      if (navMatch != null) {\n        navDate = navMatch.group(1);\n        nav = navMatch.group(2);\n      } else {\n        final navMatch2 = RegExp(r'单位净值[^)]*?\((\d+-\d+)\)[^0-9]*?(\d+\.\d+)').firstMatch(html);\n        if (navMatch2 != null) {\n          navDate = navMatch2.group(1);\n          nav = navMatch2.group(2);\n        }\n      }\n      double? actualChange;\n      final changeMatch = RegExp(r'>([+-]?\d+\.?\d*)%<').firstMatch(html);\n      if (changeMatch != null) actualChange = double.tryParse(changeMatch.group(1)!);\n      return {'fundName': fundName, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};\n    } catch (e) {\n      return {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};\n    }\n  }\n\n  static Future<FundData> query(String fundCode) async {\n    String? globalError;\n    final session = getSessionLabel();\n    final now = DateTime.now();\n    final nowStr = DateFormat('HH:mm').format(now);\n\n    Map<String, dynamic> base;\n    try {\n      base = await fetchBaseInfo(fundCode);\n    } catch (e) {\n      globalError = '获取基本信息失败: $e';\n      base = {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};\n    }\n    final fundName = base['fundName'];\n    final nav = base['nav'] as String?;\n    final navDate = base['navDate'] as String?;\n    final actualChange = base['actualChange'] as double?;\n\n    List<Map<String, dynamic>> holdingsRaw = [];\n    try {\n      holdingsRaw = await fetchHoldings(fundCode);\n    } catch (e) {\n      if (globalError == null) globalError = '获取持仓失败: $e';\n    }\n\n    List<StockHolding> holdings = [];\n    double totalPct = 0;\n    double weightedChange = 0;\n    int successCount = 0;\n    if (holdingsRaw.isNotEmpty) {\n      for (var h in holdingsRaw) {\n        final pct = h['pct'] as double;\n        totalPct += pct;\n        final code = h['code'];\n        double? change;\n        String? errMsg;\n        try {\n          change = await fetchStockChange(code);\n          if (change == null) errMsg = '解析失败';\n        } catch (e) {\n          errMsg = e.toString();\n        }\n        if (change != null) {\n          weightedChange += pct * change;\n          successCount++;\n        }\n        holdings.add(StockHolding(name: h['name'], code: code, pct: pct, change: change, errorMsg: errMsg));\n      }\n    }\n    double estimatedChange = (totalPct > 0 && successCount > 0) ? weightedChange / 100.0 : 0.0;\n    estimatedChange = double.parse(estimatedChange.toStringAsFixed(2));\n\n    final navIsToday = isSameDay(navDate);\n    FundData fundData;\n    if (session == '交易中' || session == '午休') {\n      fundData = FundData(\n        fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,\n        estimatedChange: estimatedChange,\n        estimatedNav: nav != null ? double.parse(nav) * (1 + estimatedChange / 100) : null,\n        actualChange: null, isFinal: false,\n        holdings: holdings, totalPct: totalPct,\n        updateTime: nowStr, status: session,\n        networkError: globalError,\n      );\n    } else if (session == '已收盘') {\n      if (navIsToday && actualChange != null) {\n        fundData = FundData(\n          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,\n          estimatedChange: actualChange, estimatedNav: null, actualChange: actualChange,\n          isFinal: true, holdings: holdings, totalPct: totalPct,\n          updateTime: nowStr, status: '已收盘（最终）',\n          networkError: globalError,\n        );\n      } else {\n        fundData = FundData(\n          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,\n          estimatedChange: estimatedChange,\n          estimatedNav: nav != null ? double.parse(nav) * (1 + estimatedChange / 100) : null,\n          actualChange: null, isFinal: false,\n          holdings: holdings, totalPct: totalPct,\n          updateTime: nowStr, status: '待公布净值',\n          networkError: globalError,\n        );\n      }\n    } else {\n      final change = actualChange ?? 0.0;\n      fundData = FundData(\n        fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,\n        estimatedChange: change, estimatedNav: null, actualChange: actualChange,\n        isFinal: true, holdings: holdings, totalPct: totalPct,\n        updateTime: nowStr, status: '上交易日',\n        networkError: globalError,\n      );\n    }\n    return fundData;\n  }\n}\n\n// ---- 持久化 ----\nclass FundStore {\n  static Future<List<SavedFund>> load() async {\n    final prefs = await SharedPreferences.getInstance();\n    final raw = prefs.getString('funds');\n    if (raw == null || raw.isEmpty) return [];\n    try {\n      final list = jsonDecode(raw) as List;\n      return list.map((e) => SavedFund.fromJson(e as Map<String, dynamic>)).toList();\n    } catch (_) { return []; }\n  }\n\n  static Future<void> save(List<SavedFund> funds) async {\n    final prefs = await SharedPreferences.getInstance();\n    final raw = jsonEncode(funds.map((f) => f.toJson()).toList());\n    await prefs.setString('funds', raw);\n  }\n}\n\n// ---- UI ----\nclass HomePage extends StatefulWidget {\n  const HomePage({super.key});\n  @override\n  State<HomePage> createState() => _HomePageState();\n}\n\nclass _HomePageState extends State<HomePage> {\n  List<SavedFund> _savedFunds = [];\n  Map<String, FundData?> _results = {};\n  Map<String, bool> _loading = {};\n  Map<String, bool> _expanded = {};\n  bool _selectionMode = false;\n  final Set<String> _selectedCodes = {};\n\n  final _codeCtrl = TextEditingController();\n  final _amountCtrl = TextEditingController();\n  Timer? _autoRefreshTimer;\n  bool _initialLoading = false;\n\n  @override\n  void initState() {\n    super.initState();\n    _loadSaved();\n    _startAutoRefresh();\n  }\n\n  @override\n  void dispose() {\n    _autoRefreshTimer?.cancel();\n    _codeCtrl.dispose();\n    _amountCtrl.dispose();\n    super.dispose();\n  }\n\n  Future<void> _loadSaved() async {\n    final funds = await FundStore.load();\n    setState(() {\n      _savedFunds = funds;\n      _initialLoading = false;\n    });\n    if (funds.isNotEmpty) _refreshAll();\n  }\n\n  void _startAutoRefresh() {\n    _autoRefreshTimer?.cancel();\n    _autoRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {\n      if (mounted && _savedFunds.isNotEmpty) _refreshAll();\n    });\n  }\n\n  Future<void> _refreshAll() async {\n    for (var f in _savedFunds) {\n      _querySingle(f.code);\n    }\n  }\n\n  Future<void> _querySingle(String code) async {\n    if (_loading[code] == true) return;\n    setState(() => _loading[code] = true);\n    try {\n      final result = await FundApi.query(code);\n      setState(() {\n        _results[code] = result;\n        _loading[code] = false;\n      });\n    } catch (e) {\n      setState(() {\n        _results[code] = FundData(\n          fundName: code, fundCode: code, estimatedChange: 0, isFinal: false,\n          holdings: [], totalPct: 0, updateTime: '', status: '查询失败', networkError: e.toString(),\n        );\n        _loading[code] = false;\n      });\n    }\n  }\n\n  void _addFromBar() {\n    final code = _codeCtrl.text.trim();\n    if (code.length != 6) {\n      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));\n      return;\n    }\n    if (!RegExp(r'^\d{6}$').hasMatch(code)) {\n      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));\n      return;\n    }\n    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0.0;\n    _codeCtrl.clear();\n    _amountCtrl.clear();\n    _addFundWithCheck(code, amount);\n  }\n\n  Future<void> _addFundWithCheck(String code, double amount) async {\n    try {\n      final result = await FundApi.query(code);\n      if (result.fundName.startsWith('基金') && result.fundName.contains(code)) {\n        if (mounted) {\n          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('未查询到基金相关信息，请重新输入代码')));\n        }\n        return;\n      }\n      _addFund(code, amount);\n    } catch (e) {\n      if (mounted) {\n        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('查询失败: ' + e.toString())));\n      }\n      return;\n    }\n  }\n\n  Future<void> _addFund(String code, double amount) async {\n    if (_savedFunds.any((f) => f.code == code)) {\n      // 已存在则更新金额\n      final idx = _savedFunds.indexWhere((f) => f.code == code);\n      _savedFunds[idx].amount = amount;\n    } else {\n      _savedFunds.add(SavedFund(code: code, amount: amount));\n      _expanded[code] = false;\n    }\n    await FundStore.save(_savedFunds);\n    setState(() {});\n    _querySingle(code);\n  }\n\n  void _editAmount(String code, double currentAmount) {\n    final ctrl = TextEditingController(text: currentAmount > 0 ? currentAmount.toStringAsFixed(0) : '');\n    showDialog(\n      context: context,\n      builder: (ctx) => AlertDialog(\n        title: const Text('修改金额'),\n        content: SizedBox(\n          width: 200,\n          child: TextField(\n            controller: ctrl,\n            decoration: const InputDecoration(labelText: '持有金额（元）'),\n            keyboardType: TextInputType.number,\n            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],\n          ),\n        ),\n        actions: [\n          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),\n          TextButton(onPressed: () async {\n            final amt = double.tryParse(ctrl.text.trim()) ?? 0;\n            Navigator.pop(ctx);\n            if (amt > 0) {\n              final idx = _savedFunds.indexWhere((f) => f.code == code);\n              if (idx >= 0) {\n                setState(() {\n                  _savedFunds[idx] = SavedFund(code: code, amount: amt);\n                });\n                await FundStore.save(_savedFunds);\n              }\n              if (_results[code] != null) _querySingle(code);\n            }\n          }, child: const Text('确定')),\n        ],\n      ),\n    );\n  }\n\n  Future<void> _deleteFund(String code) async {\n    _savedFunds.removeWhere((f) => f.code == code);\n    _results.remove(code);\n    _loading.remove(code);\n    _expanded.remove(code);\n    await FundStore.save(_savedFunds);\n    setState(() {});\n  }\n\n  Future<void> _clearAll() async {\n    final confirm = await showDialog<bool>(\n      context: context,\n      builder: (ctx) => AlertDialog(\n        title: const Text('清空所有'),\n        content: const Text('确定要清空所有基金吗？'),\n        actions: [\n          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),\n          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),\n        ],\n      ),\n    );\n    if (confirm == true) {\n      _savedFunds.clear();\n      _results.clear();\n      _loading.clear();\n      _expanded.clear();\n      await FundStore.save(_savedFunds);\n      setState(() {});\n    }\n  }\n\n  void _onDeleteButtonPressed() {\n    if (_selectionMode && _selectedCodes.isNotEmpty) {\n      _showDeleteSelectedConfirm();\n    } else {\n      _clearAll();\n    }\n  }\n\n  void _showDeleteSelectedConfirm() {\n    showDialog(\n      context: context,\n      builder: (ctx) => AlertDialog(\n        title: const Text('删除所选基金'),\n        content: Text('确定删除选中的 ' + _selectedCodes.length.toString() + ' 只基金吗?'),\n        actions: [\n          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),\n          TextButton(onPressed: () {\n            Navigator.pop(ctx);\n            _deleteSelected();\n          }, child: const Text('确定', style: TextStyle(color: kRedUp))),\n        ],\n      ),\n    );\n  }\n\n  void _deleteSelected() async {\n    for (final code in _selectedCodes) {\n      _savedFunds.removeWhere((f) => f.code == code);\n      _results.remove(code);\n      _loading.remove(code);\n      _expanded.remove(code);\n    }\n    _selectedCodes.clear();\n    _selectionMode = false;\n    await FundStore.save(_savedFunds);\n    setState(() {});\n  }\n\n  void _showAddDialog() {\n    final codeCtrl = TextEditingController();\n    final amountCtrl = TextEditingController();\n    showDialog(\n      context: context,\n      builder: (ctx) => AlertDialog(\n        title: const Text('添加基金'),\n        content: Column(\n          mainAxisSize: MainAxisSize.min,\n          children: [\n            TextField(\n              controller: codeCtrl,\n              decoration: const InputDecoration(labelText: '基金代码', border: OutlineInputBorder(), isDense: true),\n              keyboardType: TextInputType.number,\n              inputFormatters: [FilteringTextInputFormatter.digitsOnly],\n              maxLength: 6,\n              buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,\n            ),\n            const SizedBox(height: 12),\n            TextField(\n              controller: amountCtrl,\n              decoration: const InputDecoration(labelText: '持有金额（元，可选）', border: OutlineInputBorder(), isDense: true),\n              keyboardType: TextInputType.number,\n              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],\n            ),\n          ],\n        ),\n        actions: [\n          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),\n          TextButton(\n            onPressed: () {\n              final code = codeCtrl.text.trim();\n              if (code.length != 6) {\n                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));\n                return;\n              }\n              final amount = double.tryParse(amountCtrl.text.trim()) ?? 0.0;\n              Navigator.pop(ctx);\n              _addFund(code, amount);\n            },\n            child: const Text('添加'),\n          ),\n        ],\n      ),\n    );\n  }\n\n  @override\n  Widget build(BuildContext context) {\n    return Scaffold(\n      appBar: AppBar(\n        title: const Text('基金净值预估'),\n        centerTitle: false,\n\n      ),\n\n      body: _buildBody(),\n    );\n  }\n\n  Widget _buildBody() {\n    return Column(\n      children: [\n        // Top input bar\n        Container(\n          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),\n          decoration: const BoxDecoration(\n            color: Colors.white,\n            border: Border(bottom: BorderSide(color: kBorder)),\n          ),\n          child: Row(\n            children: [\n              Expanded(\n                flex: 2,\n                child: SizedBox(\n                  height: 40,\n                  child: TextField(\n                    controller: _codeCtrl,\n                    decoration: const InputDecoration(\n                      hintText: '基金代码',\n                      border: OutlineInputBorder(),\n                      isDense: true,\n                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),\n                    ),\n                    keyboardType: TextInputType.number,\n                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],\n                    maxLength: 6,\n                    buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,\n                  ),\n                ),\n              ),\n              const SizedBox(width: 8),\n              Expanded(\n                flex: 4,\n                child: SizedBox(\n                  height: 40,\n                  child: TextField(\n                    controller: _amountCtrl,\n                    decoration: const InputDecoration(\n                      hintText: '金额(元)',\n                      border: OutlineInputBorder(),\n                      isDense: true,\n                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),\n                    ),\n                    keyboardType: TextInputType.number,\n                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],\n                  ),\n                ),\n              ),\n              const SizedBox(width: 8),\n              Container(\n                decoration: BoxDecoration(\n                  color: Theme.of(context).colorScheme.primary,\n                  shape: BoxShape.circle,\n                ),\n                child: IconButton(\n                  icon: const Icon(Icons.add, color: Colors.white),\n                  onPressed: _addFromBar,\n                  tooltip: '添加基金',\n                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),\n                  padding: EdgeInsets.zero,\n                ),\n              ),\n              const SizedBox(width: 4),\n              IconButton(\n                icon: const Icon(Icons.refresh, size: 22),\n                tooltip: '刷新',\n                onPressed: _refreshAll,\n                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),\n                padding: EdgeInsets.zero,\n              ),\n              const SizedBox(width: 4),\n              IconButton(\n                icon: Icon(_selectionMode ? Icons.delete_sweep : Icons.delete_outline, size: 22),\n                tooltip: _selectionMode ? '删除所选' : '清空全部',\n                onPressed: _onDeleteButtonPressed,\n                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),\n                padding: EdgeInsets.zero,\n              ),\n            ],\n          ),\n        ),\n        // Fund list\n        Expanded(\n          child: _savedFunds.isEmpty\n              ? const Center(\n                  child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)),\n                )\n              : RefreshIndicator(\n                  onRefresh: () async => _refreshAll(),\n                  child: ListView.builder(\n                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),\n                    itemCount: _savedFunds.length,\n                    itemBuilder: (ctx, i) => _buildFundCard(_savedFunds[i]),\n                  ),\n                ),\n        ),\n      ],\n    );\n  }\n\n    Widget _buildFundCard(SavedFund saved) {\n    final code = saved.code;\n    final data = _results[code];\n    final isLoading = _loading[code] == true;\n    final isExpanded = _expanded[code] ?? false;\n    final isSelected = _selectedCodes.contains(code);\n\n    // Build earning widget\n    final isFinalValue = data != null && data.isFinal && data.nav != null;\n    Widget? earningsWidget;\n    if (saved.amount > 0 && data != null) {\n      earningsWidget = Text(\n        _earningsText(isFinalValue ? saved.amount : saved.amount, isFinalValue ? (data!.actualChange ?? data.estimatedChange) : data.estimatedChange),\n        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),\n      );\n    }\n\n    return GestureDetector(\n      onLongPress: () {\n        setState(() {\n          _selectionMode = true;\n          _selectedCodes.add(code);\n        });\n      },\n      child: Card(\n      margin: const EdgeInsets.only(bottom: 12),\n        shape: RoundedRectangleBorder(\n          borderRadius: BorderRadius.circular(12),\n          side: isSelected ? const BorderSide(color: kRedUp, width: 2) : BorderSide.none,\n        ),\n      elevation: 1,\n      child: InkWell(\n        borderRadius: BorderRadius.circular(12),\n        onTap: () {\n          if (_selectionMode) {\n            setState(() {\n              if (_selectedCodes.contains(code)) {\n                _selectedCodes.remove(code);\n                if (_selectedCodes.isEmpty) _selectionMode = false;\n              } else {\n                _selectedCodes.add(code);\n              }\n            });\n          } else if (data == null && !isLoading) {\n            _querySingle(code);\n          }\n        },\n        child: Padding(\n          padding: const EdgeInsets.all(16),\n          child: Column(\n            crossAxisAlignment: CrossAxisAlignment.start,\n            children: [\n              // Header: fund name + delete\n              Row(\n                crossAxisAlignment: CrossAxisAlignment.start,\n                children: [\n                  Expanded(\n                    child: Column(\n                      crossAxisAlignment: CrossAxisAlignment.start,\n                      children: [\n                        Text(\n                          data?.fundName ?? '查询中…',\n                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),\n                        ),\n                        const SizedBox(height: 2),\n                        Text(code, style: const TextStyle(fontSize: 12, color: kTextMuted)),\n                      ],\n                    ),\n                  ),\n                  if (isLoading)\n                    const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),\n                  PopupMenuButton<String>(\n                    itemBuilder: (_) => [\n                      const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(color: kRedUp))),\n                    ],\n                    onSelected: (v) {\n                      if (v == 'delete') _showDeleteConfirm(code);\n                    },\n                  ),\n                ],\n              ),\n              if (data != null) ...[\n                const SizedBox(height: 8),\n                Row(\n                  children: [\n                    if (data.nav != null)\n                      Text('净值 ${data.nav!} (${data.navDate ?? "--"})', style: const TextStyle(fontSize: 12, color: kTextMuted)),\n                    const Spacer(),\n                    Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),\n                  ],\n                ),\n                const SizedBox(height: 4),\n                Row(\n                  children: [\n                    _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),\n                    if (data.estimatedNav != null) ...[\n                      const SizedBox(width: 12),\n                      Text('≈ ${data.estimatedNav!.toStringAsFixed(4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),\n                    ],\n                    const Spacer(),\n                    if (earningsWidget != null) earningsWidget,\n                  ],\n                ),\n                if (saved.amount > 0)\n                  Padding(\n                    padding: const EdgeInsets.only(top: 2),\n                    child: GestureDetector(\n                      onTap: () => _editAmount(code, saved.amount),\n                      child: Text('持有 ${saved.amount.toStringAsFixed(0)} 元', style: const TextStyle(fontSize: 11, color: kTextMuted)),\n                    ),\n                  ),\n                const Divider(height: 20),\n                InkWell(\n                  onTap: () => setState(() => _expanded[code] = !isExpanded),\n                  child: Row(\n                    children: [\n                      Text('前十大持仓 (${data.totalPct.toStringAsFixed(1)}%)',\n                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),\n                      const Spacer(),\n                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 20, color: kTextMuted),\n                    ],\n                  ),\n                ),\n                if (isExpanded) ...[\n                  const SizedBox(height: 8),\n                  if (data.holdings.isEmpty)\n                    const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))\n                  else\n                    ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),\n                ],\n              ]\n              else ...[\n                const Padding(\n                  padding: EdgeInsets.only(top: 8),\n                  child: Text('点击加载', style: TextStyle(color: kTextMuted)),\n                ),\n              ],\n              if (data?.networkError != null)\n                Padding(\n                  padding: const EdgeInsets.only(top: 4),\n                  child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 11, color: Colors.orange)),\n                ),\n              if (data != null)\n                Padding(\n                  padding: const EdgeInsets.only(top: 4),\n                  child: Text('${data.updateTime}', style: const TextStyle(fontSize: 10, color: kTextMuted)),\n                ),\n            ],\n          ),\n        ),\n      ),\n    );\n    );\n  }\n\n  Widget _changeWidget(double change, String label) {\n    final color = change >= 0 ? kRedUp : kGreenDown;\n    final sign = change >= 0 ? '+' : '';\n    return Row(\n      mainAxisSize: MainAxisSize.min,\n      children: [\n        if (label.isNotEmpty)\n          Padding(\n            padding: const EdgeInsets.only(right: 4),\n            child: Text(label, style: const TextStyle(fontSize: 11, color: kTextMuted)),\n          ),\n        Text(\n          '$sign${change.toStringAsFixed(2)}%',\n          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color),\n        ),\n      ],\n    );\n  }\n\n  Widget _buildStockRow(int index, StockHolding s) {\n    return Padding(\n      padding: const EdgeInsets.only(bottom: 4),\n      child: Row(\n        children: [\n          SizedBox(\n            width: 20,\n            child: Text('$index', style: const TextStyle(fontSize: 12, color: kTextMuted)),\n          ),\n          Expanded(\n            flex: 2,\n            child: Text(s.name, style: const TextStyle(fontSize: 13)),\n          ),\n          Text('${s.pct.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 12, color: kTextMuted)),\n          const SizedBox(width: 8),\n          SizedBox(\n            width: 70,\n            child: _buildStockChange(s),\n          ),\n        ],\n      ),\n    );\n  }\n\n  Widget _buildStockChange(StockHolding s) {\n    bool hasError = s.change == null;\n    double changeVal = s.change ?? 0.0;\n    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;\n    final sign = (!hasError && changeVal >= 0) ? '+' : '';\n    return Row(\n      mainAxisAlignment: MainAxisAlignment.end,\n      children: [\n        if (hasError)\n          Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 14, color: Colors.orange))\n        else\n          Text('$sign${changeVal.toStringAsFixed(2)}%',\n            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),\n      ],\n    );\n  }\n\n  String _earningsText(double amount, double change) {\n    final earnings = amount * change / 100;\n    final sign = earnings >= 0 ? '+' : '';\n    return '收益 ' + sign + earnings.toStringAsFixed(2);\n  }\n\n\n  Color _earningsColor2(double amount, double change) {\n    final earnings = amount * change / 100;\n    return earnings >= 0 ? kRedUp : kGreenDown;\n  }\n\n  void _showDeleteConfirm(String code) {\n    showDialog(\n      context: context,\n      builder: (ctx) => AlertDialog(\n        title: const Text('删除基金'),\n        content: Text('确定删除基金 ' + code + ' 吗?'),\n        actions: [\n          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),\n          TextButton(onPressed: () { Navigator.pop(ctx); _deleteFund(code); }, child: const Text('确定', style: TextStyle(color: kRedUp))),\n        ],\n      ),\n    );\n  }\n}
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:html/parser.dart' as html_parser;
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  runApp(const FundApp());
+}
+
+class FundApp extends StatelessWidget {
+  const FundApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '基金净值预估',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorSchemeSeed: Colors.blue,
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF1F3F5),
+      ),
+      home: const HomePage(),
+    );
+  }
+}
+
+const Color kRedUp = Color(0xFFEF4444);
+const Color kGreenDown = Color(0xFF10B981);
+const Color kTextMuted = Color(0xFF64748B);
+const Color kCardBg = Color(0xFFFFFFFF);
+const Color kBorder = Color(0xFFE2E8F0);
+
+// ---- Models ----
+class StockHolding {
+  final String name;
+  final String code;
+  final double pct;
+  final double? change;
+  final String? errorMsg;
+  StockHolding({required this.name, required this.code, required this.pct, this.change, this.errorMsg});
+}
+
+class FundData {
+  final String fundName;
+  final String fundCode;
+  final String? nav;
+  final String? navDate;
+  final double estimatedChange;
+  final double? estimatedNav;
+  final double? actualChange;
+  final bool isFinal;
+  final List<StockHolding> holdings;
+  final double totalPct;
+  final String updateTime;
+  final String status;
+  final String? networkError;
+  FundData({
+    required this.fundName,
+    required this.fundCode,
+    this.nav,
+    this.navDate,
+    required this.estimatedChange,
+    this.estimatedNav,
+    this.actualChange,
+    required this.isFinal,
+    required this.holdings,
+    required this.totalPct,
+    required this.updateTime,
+    required this.status,
+    this.networkError,
+  });
+}
+
+// 持久化存储的基金项
+class SavedFund {
+  String code;
+  double amount;
+  SavedFund({required this.code, this.amount = 0.0});
+
+  Map<String, dynamic> toJson() => {'code': code, 'amount': amount};
+  factory SavedFund.fromJson(Map<String, dynamic> j) => SavedFund(code: j['code'] as String, amount: (j['amount'] as num).toDouble());
+}
+
+// ---- API ----
+class FundApi {
+  static const _timeout = Duration(seconds: 20);
+  static const _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
+
+  static Future<String> _get(String url, {Map<String, String>? headers}) async {
+    headers ??= {
+      'User-Agent': _userAgent,
+      'Referer': 'https://fund.eastmoney.com/',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Accept-Encoding': 'gzip, deflate',
+      'Connection': 'keep-alive',
+    };
+    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');
+    try {
+      final client = http.Client();
+      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) return utf8.decode(response.bodyBytes);
+    } catch (_) {}
+    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');
+    final client = http.Client();
+    try {
+      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) return utf8.decode(response.bodyBytes);
+      throw Exception('HTTP ${response.statusCode}');
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<Uint8List> _getBytes(String url, {Map<String, String>? headers}) async {
+    headers ??= {'User-Agent': _userAgent, 'Referer': 'https://fund.eastmoney.com/', 'Accept': '*/*'};
+    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');
+    try {
+      final client = http.Client();
+      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) return response.bodyBytes;
+    } catch (_) {}
+    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');
+    final client = http.Client();
+    try {
+      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) return response.bodyBytes;
+      throw Exception('HTTP ${response.statusCode}');
+    } finally {
+      client.close();
+    }
+  }
+
+  static String getSessionLabel() {
+    final now = DateTime.now();
+    if (now.weekday > 5) return '休市';
+    final t = now.hour * 60 + now.minute;
+    if (t < 9 * 60 + 30) return '未开市';
+    if (t <= 11 * 60 + 30) return '交易中';
+    if (t < 13 * 60) return '午休';
+    if (t <= 15 * 60) return '交易中';
+    return '已收盘';
+  }
+
+  static bool isSameDay(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return false;
+    try {
+      final parsed = DateFormat('yyyy-MM-dd').parseStrict(dateStr);
+      final now = DateTime.now();
+      return parsed.year == now.year && parsed.month == now.month && parsed.day == now.day;
+    } catch (_) { return false; }
+  }
+
+  static Future<double?> fetchStockChange(String stockCode) async {
+    String prefix;
+    if (stockCode.startsWith('6')) prefix = 'sh';
+    else if (stockCode.startsWith('8') || stockCode.startsWith('4')) prefix = 'bj';
+    else prefix = 'sz';
+    final url = 'https://qt.gtimg.cn/q=$prefix$stockCode';
+    try {
+      final bytes = await _getBytes(url);
+      final parts = <String>[];
+      int start = 0;
+      for (int i = 0; i < bytes.length; i++) {
+        if (bytes[i] == 0x7E) {
+          parts.add(utf8.decode(bytes.sublist(start, i), allowMalformed: true));
+          start = i + 1;
+        }
+      }
+      if (start < bytes.length) parts.add(utf8.decode(bytes.sublist(start), allowMalformed: true));
+      // Tencent stock quote format (0-indexed):
+      // 0:market,1:name,2:code,3:price,4:yestClose,5:open,6:volume, ...
+      // Actually the change percentage (涨跌幅) is at index 32 (the third-to-last 百分比字段)
+      // Let's try multiple known positions: 32 is the standard change% for stocks
+      // Other known formats use index 3 for price, 32 for change%, so try 32 first
+      for (int idx in [32, 31, 33, 3]) {
+        if (parts.length > idx) {
+          String raw = parts[idx].trim().replaceAll('%', '');
+          if (raw.isNotEmpty && raw != '--' && raw != '0.00') {
+            final val = double.tryParse(raw);
+            if (val != null && val.abs() < 100) return val;
+          }
+        }
+      }
+      // Last resort: find any field that looks like a stock change
+      for (int i = 3; i < parts.length && i < 40; i++) {
+        String raw = parts[i].trim().replaceAll('%', '');
+        if (raw.isNotEmpty && raw != '--') {
+          final val = double.tryParse(raw);
+          if (val != null && val.abs() > 0.01 && val.abs() < 30) return val;
+        }
+      }
+      return null;
+    } catch (e) {
+      throw Exception('$stockCode: $e');
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {
+    final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';
+    try {
+      final body = await _get(url);
+      final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);
+      if (contentMatch == null) return [];
+      String content = contentMatch.group(1)!;
+      content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
+      final reg = RegExp(
+        r'''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''',
+        dotAll: true,
+      );
+      final matches = reg.allMatches(content);
+      final holdings = <Map<String, dynamic>>[];
+      for (final m in matches) {
+        final code = m.group(1)!;
+        final name = m.group(2)!.trim();
+        final pct = double.tryParse(m.group(3)!) ?? 0.0;
+        if (code.length == 6 && pct > 0) {
+          holdings.add({'code': code, 'name': name, 'pct': pct});
+        }
+      }
+      return holdings;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>> fetchBaseInfo(String fundCode) async {
+    final url = 'https://fund.eastmoney.com/$fundCode.html';
+    try {
+      final html = await _get(url);
+      final nameMatch = RegExp(r'<title>([^<]+?)\(\d{6}\)').firstMatch(html);
+      final fundName = nameMatch?.group(1)?.trim() ?? '基金$fundCode';
+      String? nav, navDate;
+      final navMatch = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
+      if (navMatch != null) {
+        navDate = navMatch.group(1);
+        nav = navMatch.group(2);
+      } else {
+        final navMatch2 = RegExp(r'单位净值[^)]*?\((\d+-\d+)\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
+        if (navMatch2 != null) {
+          navDate = navMatch2.group(1);
+          nav = navMatch2.group(2);
+        }
+      }
+      double? actualChange;
+      final changeMatch = RegExp(r'>([+-]?\d+\.?\d*)%<').firstMatch(html);
+      if (changeMatch != null) actualChange = double.tryParse(changeMatch.group(1)!);
+      return {'fundName': fundName, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
+    } catch (e) {
+      return {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};
+    }
+  }
+
+  static Future<FundData> query(String fundCode) async {
+    String? globalError;
+    final session = getSessionLabel();
+    final now = DateTime.now();
+    final nowStr = DateFormat('HH:mm').format(now);
+
+    Map<String, dynamic> base;
+    try {
+      base = await fetchBaseInfo(fundCode);
+    } catch (e) {
+      globalError = '获取基本信息失败: $e';
+      base = {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};
+    }
+    final fundName = base['fundName'];
+    final nav = base['nav'] as String?;
+    final navDate = base['navDate'] as String?;
+    final actualChange = base['actualChange'] as double?;
+
+    List<Map<String, dynamic>> holdingsRaw = [];
+    try {
+      holdingsRaw = await fetchHoldings(fundCode);
+    } catch (e) {
+      if (globalError == null) globalError = '获取持仓失败: $e';
+    }
+
+    List<StockHolding> holdings = [];
+    double totalPct = 0;
+    double weightedChange = 0;
+    int successCount = 0;
+    if (holdingsRaw.isNotEmpty) {
+      for (var h in holdingsRaw) {
+        final pct = h['pct'] as double;
+        totalPct += pct;
+        final code = h['code'];
+        double? change;
+        String? errMsg;
+        try {
+          change = await fetchStockChange(code);
+          if (change == null) errMsg = '解析失败';
+        } catch (e) {
+          errMsg = e.toString();
+        }
+        if (change != null) {
+          weightedChange += pct * change;
+          successCount++;
+        }
+        holdings.add(StockHolding(name: h['name'], code: code, pct: pct, change: change, errorMsg: errMsg));
+      }
+    }
+    double estimatedChange = (totalPct > 0 && successCount > 0) ? weightedChange / 100.0 : 0.0;
+    estimatedChange = double.parse(estimatedChange.toStringAsFixed(2));
+
+    final navIsToday = isSameDay(navDate);
+    FundData fundData;
+    if (session == '交易中' || session == '午休') {
+      fundData = FundData(
+        fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
+        estimatedChange: estimatedChange,
+        estimatedNav: nav != null ? double.parse(nav) * (1 + estimatedChange / 100) : null,
+        actualChange: null, isFinal: false,
+        holdings: holdings, totalPct: totalPct,
+        updateTime: nowStr, status: session,
+        networkError: globalError,
+      );
+    } else if (session == '已收盘') {
+      if (navIsToday && actualChange != null) {
+        fundData = FundData(
+          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
+          estimatedChange: actualChange, estimatedNav: null, actualChange: actualChange,
+          isFinal: true, holdings: holdings, totalPct: totalPct,
+          updateTime: nowStr, status: '已收盘（最终）',
+          networkError: globalError,
+        );
+      } else {
+        fundData = FundData(
+          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
+          estimatedChange: estimatedChange,
+          estimatedNav: nav != null ? double.parse(nav) * (1 + estimatedChange / 100) : null,
+          actualChange: null, isFinal: false,
+          holdings: holdings, totalPct: totalPct,
+          updateTime: nowStr, status: '待公布净值',
+          networkError: globalError,
+        );
+      }
+    } else {
+      final change = actualChange ?? 0.0;
+      fundData = FundData(
+        fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
+        estimatedChange: change, estimatedNav: null, actualChange: actualChange,
+        isFinal: true, holdings: holdings, totalPct: totalPct,
+        updateTime: nowStr, status: '上交易日',
+        networkError: globalError,
+      );
+    }
+    return fundData;
+  }
+}
+
+// ---- 持久化 ----
+class FundStore {
+  static Future<List<SavedFund>> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('funds');
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List;
+      return list.map((e) => SavedFund.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) { return []; }
+  }
+
+  static Future<void> save(List<SavedFund> funds) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = jsonEncode(funds.map((f) => f.toJson()).toList());
+    await prefs.setString('funds', raw);
+  }
+}
+
+// ---- UI ----
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  List<SavedFund> _savedFunds = [];
+  Map<String, FundData?> _results = {};
+  Map<String, bool> _loading = {};
+  Map<String, bool> _expanded = {};
+  bool _selectionMode = false;
+  final Set<String> _selectedCodes = {};
+
+  final _codeCtrl = TextEditingController();
+  final _amountCtrl = TextEditingController();
+  Timer? _autoRefreshTimer;
+  bool _initialLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSaved();
+    _startAutoRefresh();
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    _codeCtrl.dispose();
+    _amountCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSaved() async {
+    final funds = await FundStore.load();
+    setState(() {
+      _savedFunds = funds;
+      _initialLoading = false;
+    });
+    if (funds.isNotEmpty) _refreshAll();
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (mounted && _savedFunds.isNotEmpty) _refreshAll();
+    });
+  }
+
+  Future<void> _refreshAll() async {
+    for (var f in _savedFunds) {
+      _querySingle(f.code);
+    }
+  }
+
+  Future<void> _querySingle(String code) async {
+    if (_loading[code] == true) return;
+    setState(() => _loading[code] = true);
+    try {
+      final result = await FundApi.query(code);
+      setState(() {
+        _results[code] = result;
+        _loading[code] = false;
+      });
+    } catch (e) {
+      setState(() {
+        _results[code] = FundData(
+          fundName: code, fundCode: code, estimatedChange: 0, isFinal: false,
+          holdings: [], totalPct: 0, updateTime: '', status: '查询失败', networkError: e.toString(),
+        );
+        _loading[code] = false;
+      });
+    }
+  }
+
+  void _addFromBar() {
+    final code = _codeCtrl.text.trim();
+    if (code.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));
+      return;
+    }
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));
+      return;
+    }
+    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0.0;
+    _codeCtrl.clear();
+    _amountCtrl.clear();
+    _addFundWithCheck(code, amount);
+  }
+
+  Future<void> _addFundWithCheck(String code, double amount) async {
+    try {
+      final result = await FundApi.query(code);
+      if (result.fundName.startsWith('基金') && result.fundName.contains(code)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('未查询到基金相关信息，请重新输入代码')));
+        }
+        return;
+      }
+      _addFund(code, amount);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('查询失败: ' + e.toString())));
+      }
+      return;
+    }
+  }
+
+  Future<void> _addFund(String code, double amount) async {
+    if (_savedFunds.any((f) => f.code == code)) {
+      // 已存在则更新金额
+      final idx = _savedFunds.indexWhere((f) => f.code == code);
+      _savedFunds[idx].amount = amount;
+    } else {
+      _savedFunds.add(SavedFund(code: code, amount: amount));
+      _expanded[code] = false;
+    }
+    await FundStore.save(_savedFunds);
+    setState(() {});
+    _querySingle(code);
+  }
+
+  void _editAmount(String code, double currentAmount) {
+    final ctrl = TextEditingController(text: currentAmount > 0 ? currentAmount.toStringAsFixed(0) : '');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('修改金额'),
+        content: SizedBox(
+          width: 200,
+          child: TextField(
+            controller: ctrl,
+            decoration: const InputDecoration(labelText: '持有金额（元）'),
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(onPressed: () async {
+            final amt = double.tryParse(ctrl.text.trim()) ?? 0;
+            Navigator.pop(ctx);
+            if (amt > 0) {
+              final idx = _savedFunds.indexWhere((f) => f.code == code);
+              if (idx >= 0) {
+                setState(() {
+                  _savedFunds[idx] = SavedFund(code: code, amount: amt);
+                });
+                await FundStore.save(_savedFunds);
+              }
+              if (_results[code] != null) _querySingle(code);
+            }
+          }, child: const Text('确定')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteFund(String code) async {
+    _savedFunds.removeWhere((f) => f.code == code);
+    _results.remove(code);
+    _loading.remove(code);
+    _expanded.remove(code);
+    await FundStore.save(_savedFunds);
+    setState(() {});
+  }
+
+  Future<void> _clearAll() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空所有'),
+        content: const Text('确定要清空所有基金吗？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      _savedFunds.clear();
+      _results.clear();
+      _loading.clear();
+      _expanded.clear();
+      await FundStore.save(_savedFunds);
+      setState(() {});
+    }
+  }
+
+  void _onDeleteButtonPressed() {
+    if (_selectionMode && _selectedCodes.isNotEmpty) {
+      _showDeleteSelectedConfirm();
+    } else {
+      _clearAll();
+    }
+  }
+
+  void _showDeleteSelectedConfirm() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除所选基金'),
+        content: Text('确定删除选中的 ' + _selectedCodes.length.toString() + ' 只基金吗?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(onPressed: () {
+            Navigator.pop(ctx);
+            _deleteSelected();
+          }, child: const Text('确定', style: TextStyle(color: kRedUp))),
+        ],
+      ),
+    );
+  }
+
+  void _deleteSelected() async {
+    for (final code in _selectedCodes) {
+      _savedFunds.removeWhere((f) => f.code == code);
+      _results.remove(code);
+      _loading.remove(code);
+      _expanded.remove(code);
+    }
+    _selectedCodes.clear();
+    _selectionMode = false;
+    await FundStore.save(_savedFunds);
+    setState(() {});
+  }
+
+  void _showAddDialog() {
+    final codeCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('添加基金'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeCtrl,
+              decoration: const InputDecoration(labelText: '基金代码', border: OutlineInputBorder(), isDense: true),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              maxLength: 6,
+              buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountCtrl,
+              decoration: const InputDecoration(labelText: '持有金额（元，可选）', border: OutlineInputBorder(), isDense: true),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () {
+              final code = codeCtrl.text.trim();
+              if (code.length != 6) {
+                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
+                return;
+              }
+              final amount = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+              Navigator.pop(ctx);
+              _addFund(code, amount);
+            },
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('基金净值预估'),
+        centerTitle: false,
+
+      ),
+
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    return Column(
+      children: [
+        // Top input bar
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: kBorder)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: SizedBox(
+                  height: 40,
+                  child: TextField(
+                    controller: _codeCtrl,
+                    decoration: const InputDecoration(
+                      hintText: '基金代码',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    maxLength: 6,
+                    buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 4,
+                child: SizedBox(
+                  height: 40,
+                  child: TextField(
+                    controller: _amountCtrl,
+                    decoration: const InputDecoration(
+                      hintText: '金额(元)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.add, color: Colors.white),
+                  onPressed: _addFromBar,
+                  tooltip: '添加基金',
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 22),
+                tooltip: '刷新',
+                onPressed: _refreshAll,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                padding: EdgeInsets.zero,
+              ),
+              const SizedBox(width: 4),
+              IconButton(
+                icon: Icon(_selectionMode ? Icons.delete_sweep : Icons.delete_outline, size: 22),
+                tooltip: _selectionMode ? '删除所选' : '清空全部',
+                onPressed: _onDeleteButtonPressed,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                padding: EdgeInsets.zero,
+              ),
+            ],
+          ),
+        ),
+        // Fund list
+        Expanded(
+          child: _savedFunds.isEmpty
+              ? const Center(
+                  child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)),
+                )
+              : RefreshIndicator(
+                  onRefresh: () async => _refreshAll(),
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+                    itemCount: _savedFunds.length,
+                    itemBuilder: (ctx, i) => _buildFundCard(_savedFunds[i]),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+    Widget _buildFundCard(SavedFund saved) {
+    final code = saved.code;
+    final data = _results[code];
+    final isLoading = _loading[code] == true;
+    final isExpanded = _expanded[code] ?? false;
+    final isSelected = _selectedCodes.contains(code);
+
+    // Build earning widget
+    final isFinalValue = data != null && data.isFinal && data.nav != null;
+    Widget? earningsWidget;
+    if (saved.amount > 0 && data != null) {
+      earningsWidget = Text(
+        _earningsText(isFinalValue ? saved.amount : saved.amount, isFinalValue ? (data!.actualChange ?? data.estimatedChange) : data.estimatedChange),
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),
+      );
+    }
+
+    return GestureDetector(
+      onLongPress: () {
+        setState(() {
+          _selectionMode = true;
+          _selectedCodes.add(code);
+        });
+      },
+      child: Card(
+      margin: const EdgeInsets.only(bottom: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: isSelected ? const BorderSide(color: kRedUp, width: 2) : BorderSide.none,
+        ),
+      elevation: 1,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          if (_selectionMode) {
+            setState(() {
+              if (_selectedCodes.contains(code)) {
+                _selectedCodes.remove(code);
+                if (_selectedCodes.isEmpty) _selectionMode = false;
+              } else {
+                _selectedCodes.add(code);
+              }
+            });
+          } else if (data == null && !isLoading) {
+            _querySingle(code);
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header: fund name + delete
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          data?.fundName ?? '查询中…',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(code, style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                      ],
+                    ),
+                  ),
+                  if (isLoading)
+                    const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  PopupMenuButton<String>(
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(color: kRedUp))),
+                    ],
+                    onSelected: (v) {
+                      if (v == 'delete') _showDeleteConfirm(code);
+                    },
+                  ),
+                ],
+              ),
+              if (data != null) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    if (data.nav != null)
+                      Text('净值 ${data.nav!} (${data.navDate ?? "--"})', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                    const Spacer(),
+                    Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
+                    if (data.estimatedNav != null) ...[
+                      const SizedBox(width: 12),
+                      Text('≈ ${data.estimatedNav!.toStringAsFixed(4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                    ],
+                    const Spacer(),
+                    if (earningsWidget != null) earningsWidget,
+                  ],
+                ),
+                if (saved.amount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: GestureDetector(
+                      onTap: () => _editAmount(code, saved.amount),
+                      child: Text('持有 ${saved.amount.toStringAsFixed(0)} 元', style: const TextStyle(fontSize: 11, color: kTextMuted)),
+                    ),
+                  ),
+                const Divider(height: 20),
+                InkWell(
+                  onTap: () => setState(() => _expanded[code] = !isExpanded),
+                  child: Row(
+                    children: [
+                      Text('前十大持仓 (${data.totalPct.toStringAsFixed(1)}%)',
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                      const Spacer(),
+                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 20, color: kTextMuted),
+                    ],
+                  ),
+                ),
+                if (isExpanded) ...[
+                  const SizedBox(height: 8),
+                  if (data.holdings.isEmpty)
+                    const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))
+                  else
+                    ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
+                ],
+              ]
+              else ...[
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('点击加载', style: TextStyle(color: kTextMuted)),
+                ),
+              ],
+              if (data?.networkError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 11, color: Colors.orange)),
+                ),
+              if (data != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('${data.updateTime}', style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    );
+  }
+
+  Widget _changeWidget(double change, String label) {
+    final color = change >= 0 ? kRedUp : kGreenDown;
+    final sign = change >= 0 ? '+' : '';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (label.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Text(label, style: const TextStyle(fontSize: 11, color: kTextMuted)),
+          ),
+        Text(
+          '$sign${change.toStringAsFixed(2)}%',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStockRow(int index, StockHolding s) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 20,
+            child: Text('$index', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(s.name, style: const TextStyle(fontSize: 13)),
+          ),
+          Text('${s.pct.toStringAsFixed(1)}%', style: const TextStyle(fontSize: 12, color: kTextMuted)),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 70,
+            child: _buildStockChange(s),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStockChange(StockHolding s) {
+    bool hasError = s.change == null;
+    double changeVal = s.change ?? 0.0;
+    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
+    final sign = (!hasError && changeVal >= 0) ? '+' : '';
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        if (hasError)
+          Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 14, color: Colors.orange))
+        else
+          Text('$sign${changeVal.toStringAsFixed(2)}%',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
+
+  String _earningsText(double amount, double change) {
+    final earnings = amount * change / 100;
+    final sign = earnings >= 0 ? '+' : '';
+    return '收益 ' + sign + earnings.toStringAsFixed(2);
+  }
+
+
+  Color _earningsColor2(double amount, double change) {
+    final earnings = amount * change / 100;
+    return earnings >= 0 ? kRedUp : kGreenDown;
+  }
+
+  void _showDeleteConfirm(String code) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除基金'),
+        content: Text('确定删除基金 ' + code + ' 吗?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(onPressed: () { Navigator.pop(ctx); _deleteFund(code); }, child: const Text('确定', style: TextStyle(color: kRedUp))),
+        ],
+      ),
+    );
+  }
+}
