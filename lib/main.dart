@@ -638,7 +638,7 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                Row(
+                                Row(
                   children: [
                     _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
                     if (data.estimatedNav != null) ...[
@@ -646,45 +646,13 @@ class _HomePageState extends State<HomePage> {
                       Text('≈ ${data.estimatedNav!.toStringAsFixed(4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),
                     ],
                     const Spacer(),
-                    // 预估收益
                     if (saved.amount > 0)
                       Text(
                         _earningsText(saved.amount, data.estimatedChange),
                         style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),
                       ),
+                  ],
                 ),
-                if (saved.amount > 0)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text('持有 ${saved.amount.toStringAsFixed(0)} 元', style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                  ),
-
-                const Divider(height: 20),
-
-                // 持仓折叠按钮
-                InkWell(
-                  onTap: () => setState(() => _expanded[code] = !isExpanded),
-                  child: Row(
-                    children: [
-                      Text(
-                        '前十大持仓 (${data.totalPct.toStringAsFixed(1)}%)',
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                      ),
-                      const Spacer(),
-                      Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 20, color: kTextMuted),
-                    ],
-                  ),
-                ),
-
-                // 持仓列表（可折叠）
-                if (isExpanded) ...[
-                  const SizedBox(height: 8),
-                  if (data.holdings.isEmpty)
-                    const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))
-                  else
-                    ...data.holdings.map((h) => _buildStockRow(h)),
-                ],
-              ],
 
               // 错误提示
               if (data?.networkError != null)
