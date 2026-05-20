@@ -452,7 +452,7 @@ class _HomePageState extends State<HomePage> {
   void _addFromBar() {
     final code = _codeCtrl.text.trim();
     if (code.length != 6) {
-      ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
       return;
     }
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0.0;
@@ -829,21 +829,39 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildStockChange(StockHolding s) {
-String _earningsText(double amount, double change) {
+    bool hasError = s.change == null;
+    double changeVal = s.change ?? 0.0;
+    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
+    final sign = (!hasError && changeVal >= 0) ? '+' : '';
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        if (hasError)
+          Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 14, color: Colors.orange))
+        else
+          Text('$sign${changeVal.toStringAsFixed(2)}%',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
+  }
+
+  String _earningsText(double amount, double change) {
     final earnings = amount * change / 100;
     final sign = earnings >= 0 ? '+' : '';
     return '收益 ' + sign + earnings.toStringAsFixed(2);
   }
+
   Color _earningsColor2(double amount, double change) {
     final earnings = amount * change / 100;
     return earnings >= 0 ? kRedUp : kGreenDown;
   }
+
   void _showDeleteConfirm(String code) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除基金'),
-        content: Text('确定删除基金 $code 吗？'),
+        content: Text('确定删除基金 ' + code + ' 吗?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           TextButton(onPressed: () { Navigator.pop(ctx); _deleteFund(code); }, child: const Text('确定', style: TextStyle(color: kRedUp))),
@@ -851,4 +869,3 @@ String _earningsText(double amount, double change) {
       ),
     );
   }
-}
