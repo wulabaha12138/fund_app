@@ -172,7 +172,7 @@ class FundApi {
       int start = 0;
       for (int i = 0; i < bytes.length; i++) {
         if (bytes[i] == 0x7E) { // '~'
-          parts.add(utf8.decode(bytes.sublist(start, i)));
+          parts.add(utf8.decode(bytes.sublist(start, i), allowMalformed: true));
           start = i + 1;
         }
       }
