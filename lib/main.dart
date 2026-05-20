@@ -648,15 +648,11 @@ class _HomePageState extends State<HomePage> {
                     const Spacer(),
                     // 预估收益
                     if (saved.amount > 0) ...[
-                      final earnings = saved.amount * data.estimatedChange / 100;
-                      final eColor = earnings >= 0 ? kRedUp : kGreenDown;
-                      final eSign = earnings >= 0 ? '+' : '';
-                      Text(
-                        '收益 $eSign${earnings.toStringAsFixed(2)}',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: eColor),
+                                           Text(
+                        _earningsText(saved.amount, data.estimatedChange),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),
                       ),
-                    ],
-                  ],
+                                      ],
                 ),
                 if (saved.amount > 0)
                   Padding(
@@ -766,6 +762,15 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+    String _earningsText(double amount, double change) {
+    final earnings = amount * change / 100;
+    final sign = earnings >= 0 ? '+' : '';
+    return '收益 ' + sign + earnings.toStringAsFixed(2);
+  }
+  Color _earningsColor2(double amount, double change) {
+    final earnings = amount * change / 100;
+    return earnings >= 0 ? kRedUp : kGreenDown;
+  }
   void _showDeleteConfirm(String code) {
     showDialog(
       context: context,
