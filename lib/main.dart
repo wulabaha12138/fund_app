@@ -896,6 +896,7 @@ class _HomePageState extends State<HomePage> {
                   else
                     ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
                 ],
+              ]
               else ...[
                 const Padding(
                   padding: EdgeInsets.only(top: 8),
