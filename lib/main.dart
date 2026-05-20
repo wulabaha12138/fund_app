@@ -1,8 +1,9 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as html_parser;
 import 'package:intl/intl.dart';
 
@@ -38,8 +39,8 @@ class StockHolding {
   final String name;
   final String code;
   final double pct;
-  final double? change; // 允许为 null，表示获取失败
-  final String? errorMsg; // 错误信息
+  final double? change;
+  final String? errorMsg;
   StockHolding({required this.name, required this.code, required this.pct, this.change, this.errorMsg});
 }
 
@@ -56,7 +57,7 @@ class FundData {
   final double totalPct;
   final String updateTime;
   final String status;
-  final String? networkError; // 全局网络错误
+  final String? networkError;
   FundData({
     required this.fundName,
     required this.fundCode,
@@ -75,35 +76,67 @@ class FundData {
 }
 
 class FundApi {
-  static const _timeout = Duration(seconds: 15);
+  static const _timeout = Duration(seconds: 20);
   static const _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
+  // 获取 UTF-8 文本（天天基金页面、持仓接口）
   static Future<String> _get(String url, {Map<String, String>? headers}) async {
     headers ??= {
       'User-Agent': _userAgent,
       'Referer': 'https://fund.eastmoney.com/',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Accept-Encoding': 'gzip, deflate',
+      'Connection': 'keep-alive',
     };
-    for (var scheme in ['https', 'http']) {
-      final fixedUrl = url.replaceFirst(RegExp(r'^https?://'), '$scheme://');
-      final uri = Uri.parse(fixedUrl);
-      final client = HttpClient()
-        ..connectionTimeout = _timeout
-        ..badCertificateCallback = (cert, host, port) => true;
-      try {
-        final request = await client.getUrl(uri);
-        headers.forEach((k, v) => request.headers.set(k, v));
-        final response = await request.close();
-        if (response.statusCode == 200) {
-          return await response.transform(utf8.decoder).join();
-        }
-      } catch (e) {
-        // 继续尝试下一个协议
-      } finally {
-        client.close();
+    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');
+    try {
+      final client = http.Client();
+      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) {
+        return utf8.decode(response.bodyBytes);
       }
+    } catch (e) {}
+    // HTTPS fallback
+    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');
+    final client = http.Client();
+    try {
+      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) {
+        return utf8.decode(response.bodyBytes);
+      }
+      throw Exception('HTTP ${response.statusCode}');
+    } finally {
+      client.close();
     }
-    throw Exception('网络请求失败，请检查网络或稍后重试');
+  }
+
+  // 获取原始字节（腾讯接口）
+  static Future<Uint8List> _getBytes(String url, {Map<String, String>? headers}) async {
+    headers ??= {
+      'User-Agent': _userAgent,
+      'Referer': 'https://fund.eastmoney.com/',
+      'Accept': '*/*',
+    };
+    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');
+    try {
+      final client = http.Client();
+      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      }
+    } catch (e) {}
+    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');
+    final client = http.Client();
+    try {
+      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      }
+      throw Exception('HTTP ${response.statusCode}');
+    } finally {
+      client.close();
+    }
   }
 
   static String getSessionLabel() {
@@ -126,7 +159,7 @@ class FundApi {
     } catch (_) { return false; }
   }
 
-  // 个股涨跌幅（完全对齐 Python 版）
+  // 个股涨跌幅（手动分割原始字节）
   static Future<double?> fetchStockChange(String stockCode) async {
     String prefix;
     if (stockCode.startsWith('6')) prefix = 'sh';
@@ -134,30 +167,32 @@ class FundApi {
     else prefix = 'sz';
     final url = 'https://qt.gtimg.cn/q=$prefix$stockCode';
     try {
-      final body = await _get(url);
-      final parts = body.split('~');
-      // 与 Python 版完全一致：优先取索引 32，再取索引 31
-      if (parts.length > 32) {
-        final raw = parts[32].trim().replaceAll('%', '');
-        if (raw.isNotEmpty && raw != '--') {
-          final val = double.tryParse(raw);
-          if (val != null) return val;
+      final bytes = await _getBytes(url);
+      final parts = <String>[];
+      int start = 0;
+      for (int i = 0; i < bytes.length; i++) {
+        if (bytes[i] == 0x7E) { // '~'
+          parts.add(utf8.decode(bytes.sublist(start, i)));
+          start = i + 1;
         }
       }
-      if (parts.length > 31) {
-        final raw = parts[31].trim().replaceAll('%', '');
-        if (raw.isNotEmpty && raw != '--') {
-          final val = double.tryParse(raw);
-          if (val != null) return val;
+      if (start < bytes.length) parts.add(utf8.decode(bytes.sublist(start)));
+      for (int idx in [31, 32, 33]) {
+        if (parts.length > idx) {
+          String raw = parts[idx].trim().replaceAll('%', '');
+          if (raw.isNotEmpty && raw != '--') {
+            final val = double.tryParse(raw);
+            if (val != null) return val;
+          }
         }
       }
-      return null; // 解析失败
+      return null;
     } catch (e) {
-      return null; // 网络异常
+      throw Exception('$stockCode: $e');
     }
   }
 
-  // 天天基金持仓（使用正则）
+  // 天天基金持仓（使用 raw string 正则，编译通过）
   static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {
     final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';
     try {
@@ -165,11 +200,12 @@ class FundApi {
       final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);
       if (contentMatch == null) return [];
       String content = contentMatch.group(1)!;
-      // 解码常见 HTML 实体
       content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
-      // 与 Python 版完全一致的正则
-      const pattern = '''<tr.*?><td.*?>\\d+</td><td.*?><a[^>]*>(\\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\\d\\.]+)%''';
-      final reg = RegExp(pattern, dotAll: true);
+      // 修正的正则：使用 raw string，避免转义错误
+      final reg = RegExp(
+        r'''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''',
+        dotAll: true,
+      );
       final matches = reg.allMatches(content);
       final holdings = <Map<String, dynamic>>[];
       for (final m in matches) {
@@ -186,6 +222,7 @@ class FundApi {
     }
   }
 
+  // 天天基金基本信息
   static Future<Map<String, dynamic>> fetchBaseInfo(String fundCode) async {
     final url = 'https://fund.eastmoney.com/$fundCode.html';
     try {
@@ -251,7 +288,7 @@ class FundApi {
         String? errMsg;
         try {
           change = await fetchStockChange(code);
-          if (change == null) errMsg = '获取失败';
+          if (change == null) errMsg = '解析失败';
         } catch (e) {
           errMsg = e.toString();
         }
@@ -416,12 +453,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildStockRow(StockHolding s) {
-    // 如果涨跌幅为 null 或获取失败，显示 "--" 和错误图标
     bool hasError = s.change == null;
     double changeVal = s.change ?? 0.0;
     final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
     final sign = (!hasError && changeVal >= 0) ? '+' : '';
-    final displayText = hasError ? '--' : '$sign${changeVal.toStringAsFixed(2)}%';
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
@@ -434,13 +469,15 @@ class _HomePageState extends State<HomePage> {
           width: 70,
           child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
             if (hasError)
-              Icon(Icons.error_outline, size: 14, color: Colors.orange)
+              Tooltip(
+                message: s.errorMsg ?? '获取失败',
+                child: const Icon(Icons.error_outline, size: 14, color: Colors.orange),
+              )
             else
-              Text(displayText, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+              Text('$sign${changeVal.toStringAsFixed(2)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
           ]),
         ),
       ]),
     );
   }
 }
-
