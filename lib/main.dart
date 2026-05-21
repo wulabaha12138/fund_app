@@ -879,6 +879,7 @@ class _HomePageState extends State<HomePage> {
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
                     itemCount: _savedFunds.length,
                     buildDefaultDragHandles: true,
+                    proxyDecorator: (child, index, animation) => child,
                     onReorder: (oldIndex, newIndex) {
                       setState(() {
                         if (newIndex > oldIndex) newIndex--;
