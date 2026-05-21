@@ -748,8 +748,7 @@ class _HomePageState extends State<HomePage> {
         title: _buildAppBarTitle(),
         centerTitle: true,
         leading: _selectionMode
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
+            ? BackButton(
                 onPressed: () {
                   setState(() {
                     _selectedCodes.clear();
@@ -758,8 +757,20 @@ class _HomePageState extends State<HomePage> {
                 },
               )
             : null,
+        leadingWidth: _selectionMode ? 48 : 0,
       ),
-      body: _buildBody(),
+      body: PopScope(
+        canPop: !_selectionMode,
+        onPopInvoked: (didPop) {
+          if (!didPop && _selectionMode) {
+            setState(() {
+              _selectedCodes.clear();
+              _selectionMode = false;
+            });
+          }
+        },
+        child: _buildBody(),
+      ),
     );
   }
 
@@ -944,13 +955,13 @@ class _HomePageState extends State<HomePage> {
                       GestureDetector(
                         onTap: () => _showDeleteConfirm(code),
                         child: Container(
-                          width: 26,
-                          height: 26,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: const Color(0xFF94A3B8), width: 1.5),
-                            borderRadius: BorderRadius.circular(4),
+                          width: 22,
+                          height: 22,
+                          decoration: const BoxDecoration(
+                            color: Color(0x22EF4444),
+                            shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.close, size: 16, color: Color(0xFF94A3B8)),
+                          child: const Icon(Icons.close, size: 14, color: Color(0xFFEF4444)),
                         ),
                       ),
                   ],
@@ -1111,13 +1122,14 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // 持有金额（大号黑色，千分位）+ 预估收益（小号）右侧垂直排列
+  // 持有金额（大号黑色，千分位）+ 预估/最终收益（小号）右侧垂直排列
   List<Widget> _buildAmountAndEarnings(String code, double amount, FundData data) {
     final isFinalValue = data.isFinal && data.nav != null;
     final change = isFinalValue ? (data.actualChange ?? data.estimatedChange) : data.estimatedChange;
     final earnings = amount * change / 100;
     final sign = earnings >= 0 ? '+' : '';
     final earnColor = earnings >= 0 ? kRedUp : kGreenDown;
+    final earnLabel = isFinalValue ? '最终收益' : '预估收益';
 
     return [
       Column(
@@ -1127,14 +1139,14 @@ class _HomePageState extends State<HomePage> {
           GestureDetector(
             onTap: () => _editAmount(code, amount),
             child: Text(
-              FundApi.formatAmount(amount),
+              '持有金额：${FundApi.formatAmount(amount)}',
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
             ),
           ),
           const SizedBox(height: 2),
-          // 预估收益 — 小号
+          // 收益 — 小号
           Text(
-            '收益 $sign${FundApi.formatTruncated(earnings, 2)}',
+            '$earnLabel：$sign${FundApi.formatTruncated(earnings, 2)}',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor),
           ),
         ],
