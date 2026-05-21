@@ -103,7 +103,17 @@ class FundApi {
     return r;
   }
 
-  /// 将 double 格式化为指定位数的字符串（截断不四舍五入）
+  static String formatAmount(double value) {
+    final parts = value.toStringAsFixed(2).split('.');
+    final intPart = parts[0];
+    final decPart = parts[1];
+    final buffer = StringBuffer();
+    for (int i = 0; i < intPart.length; i++) {
+      if (i > 0 && (intPart.length - i) % 3 == 0) buffer.write(',');
+      buffer.write(intPart[i]);
+    }
+    return '$buffer.$decPart';
+  }
   static String formatTruncated(double value, int decimals) {
     final truncated = truncateTo(value, decimals);
     return truncated.toStringAsFixed(decimals);
@@ -621,39 +631,6 @@ class _HomePageState extends State<HomePage> {
     setState(() {});
   }
 
-  Future<void> _clearAll() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('清空所有'),
-        content: const Text('确定要清空所有基金吗？'),
-        actions: [
-          TextButton(onPressed: () {
-            FocusScope.of(ctx).requestFocus(FocusNode());
-            Navigator.pop(ctx, false);
-          }, child: const Text('取消')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),
-        ],
-      ),
-    );
-    if (confirm == true) {
-      _savedFunds.clear();
-      _results.clear();
-      _loading.clear();
-      _expanded.clear();
-      await FundStore.save(_savedFunds);
-      setState(() {});
-    }
-  }
-
-  void _onDeleteButtonPressed() {
-    if (_selectionMode && _selectedCodes.isNotEmpty) {
-      _showDeleteSelectedConfirm();
-    } else {
-      _clearAll();
-    }
-  }
-
   void _showDeleteSelectedConfirm() {
     showDialog(
       context: context,
@@ -853,12 +830,29 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(width: 4),
               IconButton(
-                icon: Icon(_selectionMode ? Icons.delete_sweep : Icons.delete_outline, size: 22),
-                tooltip: _selectionMode ? '删除所选' : '清空全部',
-                onPressed: _onDeleteButtonPressed,
+                icon: Icon(_selectionMode ? Icons.check_box : Icons.checklist, size: 22),
+                tooltip: _selectionMode ? '完成多选' : '多选',
+                onPressed: () {
+                  setState(() {
+                    if (_selectionMode) {
+                      _selectedCodes.clear();
+                      _selectionMode = false;
+                    } else {
+                      _selectionMode = true;
+                    }
+                  });
+                },
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                 padding: EdgeInsets.zero,
               ),
+              if (_selectionMode)
+                IconButton(
+                  icon: const Icon(Icons.delete_sweep, size: 22, color: Colors.red),
+                  tooltip: '删除所选',
+                  onPressed: _showDeleteSelectedConfirm,
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  padding: EdgeInsets.zero,
+                ),
             ],
           ),
         ),
@@ -870,9 +864,18 @@ class _HomePageState extends State<HomePage> {
                 )
               : RefreshIndicator(
                   onRefresh: () async => _refreshAll(),
-                  child: ListView.builder(
+                  child: ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
                     itemCount: _savedFunds.length,
+                    buildDefaultDragHandles: true,
+                    onReorder: (oldIndex, newIndex) {
+                      setState(() {
+                        if (newIndex > oldIndex) newIndex--;
+                        final item = _savedFunds.removeAt(oldIndex);
+                        _savedFunds.insert(newIndex, item);
+                      });
+                      FundStore.save(_savedFunds);
+                    },
                     itemBuilder: (ctx, i) => _buildFundCard(_savedFunds[i]),
                   ),
                 ),
@@ -889,12 +892,7 @@ class _HomePageState extends State<HomePage> {
     final isSelected = _selectedCodes.contains(code);
 
     return GestureDetector(
-      onLongPress: () {
-        setState(() {
-          _selectionMode = true;
-          _selectedCodes.add(code);
-        });
-      },
+      key: ValueKey(code),
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
         shape: RoundedRectangleBorder(
@@ -943,11 +941,17 @@ class _HomePageState extends State<HomePage> {
                     if (isLoading)
                       const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
                     if (!_selectionMode)
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 20, color: Colors.red),
-                        onPressed: () => _showDeleteConfirm(code),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      GestureDetector(
+                        onTap: () => _showDeleteConfirm(code),
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFF94A3B8), width: 1.5),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Icon(Icons.close, size: 16, color: Color(0xFF94A3B8)),
+                        ),
                       ),
                   ],
                 ),
@@ -1107,7 +1111,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // 持有金额（大号黑色）+ 预估收益（小号）右侧垂直排列
+  // 持有金额（大号黑色，千分位）+ 预估收益（小号）右侧垂直排列
   List<Widget> _buildAmountAndEarnings(String code, double amount, FundData data) {
     final isFinalValue = data.isFinal && data.nav != null;
     final change = isFinalValue ? (data.actualChange ?? data.estimatedChange) : data.estimatedChange;
@@ -1119,11 +1123,11 @@ class _HomePageState extends State<HomePage> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // 持有金额 — 大号黑色
+          // 持有金额 — 大号黑色（千分位）
           GestureDetector(
             onTap: () => _editAmount(code, amount),
             child: Text(
-              '${FundApi.formatTruncated(amount, 2)}',
+              FundApi.formatAmount(amount),
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
             ),
           ),
