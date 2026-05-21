@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:html/parser.dart' as html_parser;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -743,15 +742,48 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Fix 1: 顶部显示实时交易状态（替换"基金净值预估"）
+  Widget _buildAppBarTitle() {
+    final session = FundApi.getSessionLabel();
+    String text;
+    Color color;
+
+    if (session == '交易中') {
+      text = '交易中';
+      color = kRedUp;
+    } else if (session == '午休') {
+      text = '交易中';
+      color = kRedUp;
+    } else if (session == '已收盘') {
+      text = '交易已结束';
+      color = kTextMuted;
+    } else {
+      text = '闭市';
+      color = kTextMuted;
+    }
+
+    return Text(text, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: color));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('基金净值预估'),
+        title: _buildAppBarTitle(),
         centerTitle: false,
-
+        // Fix 2: 多选模式下点击返回键退出多选模式
+        leading: _selectionMode
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  setState(() {
+                    _selectedCodes.clear();
+                    _selectionMode = false;
+                  });
+                },
+              )
+            : null,
       ),
-
       body: _buildBody(),
     );
   }
