@@ -742,16 +742,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // Fix 1: 顶部显示实时交易状态（替换"基金净值预估"）
+  // Fix 1: 顶部显示实时交易状态（替换"基金净值预估"），居中
   Widget _buildAppBarTitle() {
     final session = FundApi.getSessionLabel();
     String text;
     Color color;
 
-    if (session == '交易中') {
-      text = '交易中';
-      color = kRedUp;
-    } else if (session == '午休') {
+    if (session == '交易中' || session == '午休') {
       text = '交易中';
       color = kRedUp;
     } else if (session == '已收盘') {
@@ -762,7 +759,9 @@ class _HomePageState extends State<HomePage> {
       color = kTextMuted;
     }
 
-    return Text(text, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: color));
+    return Center(
+      child: Text(text, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: color)),
+    );
   }
 
   @override
@@ -770,8 +769,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         title: _buildAppBarTitle(),
-        centerTitle: false,
-        // Fix 2: 多选模式下点击返回键退出多选模式
+        centerTitle: true,
         leading: _selectionMode
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
@@ -890,17 +888,6 @@ class _HomePageState extends State<HomePage> {
     final isExpanded = _expanded[code] ?? false;
     final isSelected = _selectedCodes.contains(code);
 
-
-    // Build earning widget
-    final isFinalValue = data != null && data.isFinal && data.nav != null;
-    Widget? earningsWidget;
-    if (saved.amount > 0 && data != null) {
-      earningsWidget = Text(
-        _earningsText(isFinalValue ? saved.amount : saved.amount, isFinalValue ? (data!.actualChange ?? data.estimatedChange) : data.estimatedChange),
-        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _earningsColor2(saved.amount, data.estimatedChange)),
-      );
-    }
-
     return GestureDetector(
       onLongPress: () {
         setState(() {
@@ -957,7 +944,7 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
                     if (!_selectionMode)
                       IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                        icon: const Icon(Icons.close, size: 20, color: Colors.red),
                         onPressed: () => _showDeleteConfirm(code),
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -965,50 +952,60 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
                 if (data != null) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
+                  // Left: 净值信息 + 涨跌幅，Right: 持有金额 + 预估收益
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (data.nav != null)
-                        Text('净值 ${data.nav!} (${data.navDate ?? "--"})', style: const TextStyle(fontSize: 12, color: kTextMuted)),
-                      const Spacer(),
-                      Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      // Fix 6: 始终显示涨跌幅（已收盘等待公布净值时也显示预估）
-                      _changeWidget(
-                        data.estimatedChange,
-                        data.isFinal ? '' : '预估',
-                      ),
-                      // Fix 6: 非最终状态也显示预估净值
-                      if (data.estimatedNav != null) ...[
-                        const SizedBox(width: 12),
-                        Text('≈ ${FundApi.formatTruncated(data.estimatedNav!, 4)}', style: const TextStyle(fontSize: 12, color: kTextMuted)),
-                      ],
-                      const Spacer(),
-                      if (earningsWidget != null) earningsWidget,
-                    ],
-                  ),
-                  // Fix 2: 金额为0时也可点击编辑
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: GestureDetector(
-                      onTap: () => _editAmount(code, saved.amount),
-                      child: Text(
-                        saved.amount > 0
-                            ? '持有 ${FundApi.formatTruncated(saved.amount, 2)} 元'
-                            : '点击设置持有金额',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: saved.amount > 0 ? kTextMuted : Theme.of(context).colorScheme.primary,
-                          decoration: saved.amount > 0 ? null : TextDecoration.underline,
+                      // Left
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                if (data.nav != null)
+                                  Flexible(
+                                    child: Text(
+                                      '净值 ${data.nav!} (${data.navDate ?? "--"})',
+                                      style: const TextStyle(fontSize: 12, color: kTextMuted),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                const SizedBox(width: 6),
+                                Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
+                                if (data.estimatedNav != null) ...[
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    '≈ ${FundApi.formatTruncated(data.estimatedNav!, 4)}',
+                                    style: const TextStyle(fontSize: 12, color: kTextMuted),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      // Right: 持有金额 + 预估收益
+                      if (saved.amount > 0) ..._buildAmountAndEarnings(code, saved.amount, data) else
+                        GestureDetector(
+                          onTap: () => _editAmount(code, 0),
+                          child: Text(
+                            '点击设置持有金额',
+                            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary, decoration: TextDecoration.underline),
+                          ),
+                        ),
+                    ],
                   ),
-                  const Divider(height: 20),
+                  const SizedBox(height: 10),
+                  const Divider(height: 1),
                   InkWell(
                     onTap: () => setState(() => _expanded[code] = !isExpanded),
                     child: Row(
@@ -1110,16 +1107,35 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  String _earningsText(double amount, double change) {
+  // 持有金额（大号黑色）+ 预估收益（小号）右侧垂直排列
+  List<Widget> _buildAmountAndEarnings(String code, double amount, FundData data) {
+    final isFinalValue = data.isFinal && data.nav != null;
+    final change = isFinalValue ? (data.actualChange ?? data.estimatedChange) : data.estimatedChange;
     final earnings = amount * change / 100;
     final sign = earnings >= 0 ? '+' : '';
-    return '收益 ' + sign + FundApi.formatTruncated(earnings, 2);
-  }
+    final earnColor = earnings >= 0 ? kRedUp : kGreenDown;
 
-
-  Color _earningsColor2(double amount, double change) {
-    final earnings = amount * change / 100;
-    return earnings >= 0 ? kRedUp : kGreenDown;
+    return [
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // 持有金额 — 大号黑色
+          GestureDetector(
+            onTap: () => _editAmount(code, amount),
+            child: Text(
+              '${FundApi.formatTruncated(amount, 2)}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+            ),
+          ),
+          const SizedBox(height: 2),
+          // 预估收益 — 小号
+          Text(
+            '收益 $sign${FundApi.formatTruncated(earnings, 2)}',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor),
+          ),
+        ],
+      ),
+    ];
   }
 
   void _showDeleteConfirm(String code) {
