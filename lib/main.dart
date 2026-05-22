@@ -77,12 +77,10 @@ class FundData {
   });
 }
 
-// 持久化存储的基金项
 class SavedFund {
   String code;
   double amount;
   SavedFund({required this.code, this.amount = 0.0});
-
   Map<String, dynamic> toJson() => {'code': code, 'amount': amount};
   factory SavedFund.fromJson(Map<String, dynamic> j) => SavedFund(code: j['code'] as String, amount: (j['amount'] as num).toDouble());
 }
@@ -92,7 +90,6 @@ class FundApi {
   static const _timeout = Duration(seconds: 20);
   static const _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
-  // --- 截断到指定位数（不四舍五入）---
   static double truncateTo(double value, int decimals) {
     final factor = _pow10(decimals);
     return (value * factor).truncateToDouble() / factor;
@@ -201,11 +198,6 @@ class FundApi {
         }
       }
       if (start < bytes.length) parts.add(utf8.decode(bytes.sublist(start), allowMalformed: true));
-      // Tencent stock quote format (0-indexed):
-      // 0:market,1:name,2:code,3:price,4:yestClose,5:open,6:volume, ...
-      // Actually the change percentage (涨跌幅) is at index 32 (the third-to-last 百分比字段)
-      // Let's try multiple known positions: 32 is the standard change% for stocks
-      // Other known formats use index 3 for price, 32 for change%, so try 32 first
       for (int idx in [32, 31, 33, 3]) {
         if (parts.length > idx) {
           String raw = parts[idx].trim().replaceAll('%', '');
@@ -215,7 +207,6 @@ class FundApi {
           }
         }
       }
-      // Last resort: find any field that looks like a stock change
       for (int i = 3; i < parts.length && i < 40; i++) {
         String raw = parts[i].trim().replaceAll('%', '');
         if (raw.isNotEmpty && raw != '--') {
@@ -334,63 +325,39 @@ class FundApi {
       }
     }
     double estimatedChange = (totalPct > 0 && successCount > 0) ? weightedChange / 100.0 : 0.0;
-    estimatedChange = truncateTo(estimatedChange, 2); // 截断不四舍五入
+    estimatedChange = truncateTo(estimatedChange, 2);
 
     final navIsToday = isSameDay(navDate);
-    final isAfter15 = now.hour >= 15;
-    FundData fundData;
+
+    // ========== 核心交易时段逻辑 ==========
     if (session == '交易中' || session == '午休') {
-      fundData = FundData(
+      // 盘中：显示估算值
+      return FundData(
         fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
         estimatedChange: estimatedChange,
         estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null,
         actualChange: null, isFinal: false,
         holdings: holdings, totalPct: totalPct,
-        updateTime: nowStr, status: session,
+        updateTime: nowStr, status: session == '午休' ? '午休' : '交易中',
         networkError: globalError,
       );
     } else if (session == '已收盘') {
-      // Fix 7: NAV日期是今天且有actualChange，显示最终净值
+      // 收盘后：只有当今日净值已公布时才显示最终值，否则一直显示估算（直到净值公布）
       if (navIsToday && actualChange != null) {
-        fundData = FundData(
+        // 最终净值已公布
+        return FundData(
           fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
           estimatedChange: actualChange, estimatedNav: null, actualChange: actualChange,
           isFinal: true, holdings: holdings, totalPct: totalPct,
           updateTime: nowStr, status: '已收盘（最终）',
           networkError: globalError,
         );
-      } else if (navIsToday && actualChange == null) {
-        // Fix 6: 已收盘但净值未公布，仍然显示预估涨跌幅
-        fundData = FundData(
-          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
-          estimatedChange: estimatedChange,
-          estimatedNav: nav != null ? truncateTo(truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4), 4) : null,
-          actualChange: null, isFinal: false,
-          holdings: holdings, totalPct: totalPct,
-          updateTime: nowStr, status: '待公布净值',
-          networkError: globalError,
-        );
-      } else if (!navIsToday && isAfter15) {
-        // Fix 6 + Fix 7: 收盘后净值页显示昨天日期，仍然显示预估
-        final statusText = (actualChange != null) ? '已收盘（最终）' : '待公布净值';
-        final shownChange = actualChange ?? estimatedChange;
-        fundData = FundData(
-          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
-          estimatedChange: shownChange,
-          estimatedNav: (nav != null && actualChange == null)
-              ? truncateTo(truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4), 4)
-              : null,
-          actualChange: actualChange,
-          isFinal: actualChange != null,
-          holdings: holdings, totalPct: totalPct,
-          updateTime: nowStr, status: statusText,
-          networkError: globalError,
-        );
       } else {
-        fundData = FundData(
+        // 净值未公布（无论净值日期是昨天还是今天但actualChange为空），均显示持仓估算值
+        return FundData(
           fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
           estimatedChange: estimatedChange,
-          estimatedNav: nav != null ? truncateTo(truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4), 4) : null,
+          estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null,
           actualChange: null, isFinal: false,
           holdings: holdings, totalPct: totalPct,
           updateTime: nowStr, status: '待公布净值',
@@ -398,9 +365,10 @@ class FundApi {
         );
       }
     } else {
+      // 未开市或休市：显示上交易日数据
       final change = actualChange ?? estimatedChange;
       final statusText = actualChange != null ? '上交易日' : session;
-      fundData = FundData(
+      return FundData(
         fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
         estimatedChange: change, estimatedNav: null, actualChange: actualChange,
         isFinal: actualChange != null, holdings: holdings, totalPct: totalPct,
@@ -408,7 +376,6 @@ class FundApi {
         networkError: globalError,
       );
     }
-    return fundData;
   }
 }
 
@@ -518,7 +485,6 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));
       return;
     }
-    // Fix 3: 检测代码是否已存在
     if (_savedFunds.any((f) => f.code == code)) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('基金 $code 已存在列表中，如需修改请在列表中操作'),
@@ -550,7 +516,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _addFund(String code, double amount) async {
-    // Fix 3: 重复检测
     if (_savedFunds.any((f) => f.code == code)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('基金 $code 已存在列表中')));
@@ -564,7 +529,6 @@ class _HomePageState extends State<HomePage> {
     _querySingle(code);
   }
 
-  // Fix 2 + Fix 5: 编辑金额，金额为0也可编辑，自动唤起输入法
   void _editAmount(String code, double currentAmount) {
     final ctrl = TextEditingController(
       text: currentAmount > 0 ? FundApi.formatTruncated(currentAmount, 2) : '',
@@ -703,7 +667,6 @@ class _HomePageState extends State<HomePage> {
                 ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
                 return;
               }
-              // Fix 3: 检测重复
               if (_savedFunds.any((f) => f.code == code)) {
                 ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('基金 $code 已存在')));
                 return;
@@ -719,23 +682,28 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // Fix 1: 顶部显示实时交易状态（替换"基金净值预估"），居中
+  // 顶部状态栏：根据 session 显示不同文字和颜色
   Widget _buildAppBarTitle() {
     final session = FundApi.getSessionLabel();
     String text;
     Color color;
 
-    if (session == '交易中' || session == '午休') {
+    if (session == '交易中') {
       text = '交易中';
       color = kRedUp;
+    } else if (session == '午休') {
+      text = '休息中';
+      color = kTextMuted;
     } else if (session == '已收盘') {
       text = '交易已结束';
       color = kTextMuted;
+    } else if (session == '未开市') {
+      text = '未开市';
+      color = kTextMuted;
     } else {
-      text = '闭市';
+      text = '休市';
       color = kTextMuted;
     }
-
     return Center(
       child: Text(text, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: color)),
     );
@@ -777,7 +745,7 @@ class _HomePageState extends State<HomePage> {
   Widget _buildBody() {
     return Column(
       children: [
-        // Top input bar
+        // 顶部输入栏
         Container(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
           decoration: const BoxDecoration(
@@ -826,9 +794,9 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(width: 4),
               IconButton(
                 icon: const Icon(Icons.add_circle_outline, size: 22),
-                  onPressed: _addFromBar,
-                  tooltip: '添加基金',
-                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                onPressed: _addFromBar,
+                tooltip: '添加基金',
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                 padding: EdgeInsets.zero,
               ),
               const SizedBox(width: 4),
@@ -867,7 +835,7 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
         ),
-        // Fund list
+        // 基金列表
         Expanded(
           child: _savedFunds.isEmpty
               ? const Center(
@@ -896,7 +864,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-    Widget _buildFundCard(SavedFund saved) {
+  Widget _buildFundCard(SavedFund saved) {
     final code = saved.code;
     final data = _results[code];
     final isLoading = _loading[code] == true;
@@ -933,7 +901,7 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header: fund name + delete
+                // 头部：基金名称 + 删除
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -969,11 +937,10 @@ class _HomePageState extends State<HomePage> {
                 ),
                 if (data != null) ...[
                   const SizedBox(height: 10),
-                  // Left: 净值信息 + 涨跌幅，Right: 持有金额 + 预估收益
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Left
+                      // 左侧：净值 + 涨跌幅
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1009,7 +976,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      // Right: 持有金额 + 预估收益
+                      // 右侧：持有金额 + 收益
                       if (saved.amount > 0) ..._buildAmountAndEarnings(code, saved.amount, data) else
                         GestureDetector(
                           onTap: () => _editAmount(code, 0),
@@ -1063,6 +1030,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
   Widget _changeWidget(double change, String label) {
     final color = change >= 0 ? kRedUp : kGreenDown;
     final sign = change >= 0 ? '+' : '';
@@ -1123,7 +1091,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // 持有金额（大号黑色，千分位）+ 预估/最终收益（小号）右侧垂直排列
   List<Widget> _buildAmountAndEarnings(String code, double amount, FundData data) {
     final isFinalValue = data.isFinal && data.nav != null;
     final change = isFinalValue ? (data.actualChange ?? data.estimatedChange) : data.estimatedChange;
@@ -1136,7 +1103,6 @@ class _HomePageState extends State<HomePage> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // 持有金额 — 大号黑色（千分位）
           GestureDetector(
             onTap: () => _editAmount(code, amount),
             child: Text(
@@ -1145,7 +1111,6 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 2),
-          // 收益 — 小号
           Text(
             '$earnLabel：$sign${FundApi.formatTruncated(earnings, 2)}',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor),
