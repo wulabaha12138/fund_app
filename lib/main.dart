@@ -950,7 +950,7 @@ class _HomePageState extends State<HomePage> {
                           width: 22,
                           height: 22,
                           decoration: BoxDecoration(
-                            color: kTextMuted.withValues(alpha: 0.15),
+                            color: kTextMuted.withOpacity(0.15),
                             shape: BoxShape.circle,
                           ),
                           child: Icon(Icons.close, size: 14, color: kTextMuted),

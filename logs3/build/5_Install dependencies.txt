@@ -1,0 +1,51 @@
+﻿2026-05-19T18:56:26.0832562Z ##[group]Run flutter pub get
+2026-05-19T18:56:26.0832877Z [36;1mflutter pub get[0m
+2026-05-19T18:56:26.0869446Z shell: /usr/bin/bash -e {0}
+2026-05-19T18:56:26.0869726Z env:
+2026-05-19T18:56:26.0870010Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:26.0870440Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:26.0870871Z   FLUTTER_ROOT: /opt/hostedtoolcache/flutter/stable-3.22.0-x64/flutter
+2026-05-19T18:56:26.0871243Z   PUB_CACHE: /home/runner/.pub-cache
+2026-05-19T18:56:26.0871500Z ##[endgroup]
+2026-05-19T18:56:26.2336964Z 
+2026-05-19T18:56:26.2350089Z   ╔════════════════════════════════════════════════════════════════════════════╗
+2026-05-19T18:56:26.2351152Z   ║                 Welcome to Flutter! - https://flutter.dev                  ║
+2026-05-19T18:56:26.2351980Z   ║                                                                            ║
+2026-05-19T18:56:26.2352817Z   ║ The Flutter tool uses Google Analytics to anonymously report feature usage ║
+2026-05-19T18:56:26.2354256Z   ║ statistics and basic crash reports. This data is used to help improve      ║
+2026-05-19T18:56:26.2355023Z   ║ Flutter tools over time.                                                   ║
+2026-05-19T18:56:26.2355682Z   ║                                                                            ║
+2026-05-19T18:56:26.2356382Z   ║ Flutter tool analytics are not sent on the very first run. To disable      ║
+2026-05-19T18:56:26.2357228Z   ║ reporting, type 'flutter config --no-analytics'. To display the current    ║
+2026-05-19T18:56:26.2358418Z   ║ setting, type 'flutter config'. If you opt out of analytics, an opt-out    ║
+2026-05-19T18:56:26.2359317Z   ║ event will be sent, and then no further information will be sent by the    ║
+2026-05-19T18:56:26.2360107Z   ║ Flutter tool.                                                              ║
+2026-05-19T18:56:26.2360777Z   ║                                                                            ║
+2026-05-19T18:56:26.2361548Z   ║ By downloading the Flutter SDK, you agree to the Google Terms of Service.  ║
+2026-05-19T18:56:26.2362488Z   ║ The Google Privacy Policy describes how data is handled in this service.   ║
+2026-05-19T18:56:26.2363501Z   ║                                                                            ║
+2026-05-19T18:56:26.2364241Z   ║ Moreover, Flutter includes the Dart SDK, which may send usage metrics and  ║
+2026-05-19T18:56:26.2365068Z   ║ crash reports to Google.                                                   ║
+2026-05-19T18:56:26.2365761Z   ║                                                                            ║
+2026-05-19T18:56:26.2366488Z   ║ Read about data we send with crash reports:                                ║
+2026-05-19T18:56:26.2367374Z   ║ https://flutter.dev/docs/reference/crash-reporting                         ║
+2026-05-19T18:56:26.2368207Z   ║                                                                            ║
+2026-05-19T18:56:26.2368969Z   ║ See Google's privacy policy:                                               ║
+2026-05-19T18:56:26.2369884Z   ║ https://policies.google.com/privacy                                        ║
+2026-05-19T18:56:26.2370630Z   ║                                                                            ║
+2026-05-19T18:56:26.2371394Z   ║ To disable animations in this tool, use                                    ║
+2026-05-19T18:56:26.2372277Z   ║ 'flutter config --no-cli-animations'.                                      ║
+2026-05-19T18:56:26.2373143Z   ╚════════════════════════════════════════════════════════════════════════════╝
+2026-05-19T18:56:26.2373793Z 
+2026-05-19T18:56:26.4599686Z Resolving dependencies...
+2026-05-19T18:56:27.2339641Z The current Dart SDK version is 3.4.0.
+2026-05-19T18:56:27.2340450Z 
+2026-05-19T18:56:27.2341539Z Because fund_app depends on gbk_codec >=0.2.0+1 <0.4.0 which doesn't support null safety, version solving failed.
+2026-05-19T18:56:27.2342256Z 
+2026-05-19T18:56:27.2342612Z The lower bound of "sdk: '>=2.1.0 <3.0.0'" must be 2.12.0 or higher to enable null safety.
+2026-05-19T18:56:27.2344412Z For details, see https://dart.dev/null-safety
+2026-05-19T18:56:27.2344751Z 
+2026-05-19T18:56:27.2344760Z 
+2026-05-19T18:56:27.2345041Z You can try the following suggestion to make the pubspec resolve:
+2026-05-19T18:56:27.2345809Z * Try upgrading your constraint on gbk_codec: flutter pub add gbk_codec:^0.4.0
+2026-05-19T18:56:27.3116680Z ##[error]Process completed with exit code 1.

@@ -1,0 +1,37 @@
+﻿2026-05-19T18:43:42.4823275Z ##[group]Run flutter build apk --release
+2026-05-19T18:43:42.4824030Z [36;1mflutter build apk --release[0m
+2026-05-19T18:43:42.4858019Z shell: /usr/bin/bash -e {0}
+2026-05-19T18:43:42.4858275Z env:
+2026-05-19T18:43:42.4858538Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:43:42.4858950Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:43:42.4859370Z   FLUTTER_ROOT: /opt/hostedtoolcache/flutter/stable-3.22.0-x64/flutter
+2026-05-19T18:43:42.4859736Z   PUB_CACHE: /home/runner/.pub-cache
+2026-05-19T18:43:42.4859976Z ##[endgroup]
+2026-05-19T18:43:42.8733991Z 
+2026-05-19T18:45:20.9691111Z Running Gradle task 'assembleRelease'...                        
+2026-05-19T18:45:20.9700375Z lib/main.dart:176:7: Error: Expected an identifier, but got 'final'.
+2026-05-19T18:45:20.9705272Z Try inserting an identifier before 'final'.
+2026-05-19T18:45:20.9706940Z       final String pattern = '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''';
+2026-05-19T18:45:20.9711021Z       ^^^^^
+2026-05-19T18:45:20.9711451Z lib/main.dart:176:7: Error: Expected ')' before this.
+2026-05-19T18:45:20.9712376Z       final String pattern = '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''';
+2026-05-19T18:45:20.9713196Z       ^^^^^
+2026-05-19T18:45:25.5650045Z Target kernel_snapshot failed: Exception
+2026-05-19T18:45:25.5651783Z 
+2026-05-19T18:45:25.5651962Z 
+2026-05-19T18:45:25.5652318Z FAILURE: Build failed with an exception.
+2026-05-19T18:45:25.5653418Z 
+2026-05-19T18:45:25.5654001Z * What went wrong:
+2026-05-19T18:45:25.5654680Z Execution failed for task ':app:compileFlutterBuildRelease'.
+2026-05-19T18:45:25.5656110Z > Process 'command '/opt/hostedtoolcache/flutter/stable-3.22.0-x64/flutter/bin/flutter'' finished with non-zero exit value 1
+2026-05-19T18:45:25.5658530Z 
+2026-05-19T18:45:25.5658817Z * Try:
+2026-05-19T18:45:25.5659421Z > Run with --stacktrace option to get the stack trace.
+2026-05-19T18:45:25.5660222Z > Run with --info or --debug option to get more log output.
+2026-05-19T18:45:25.5660964Z > Run with --scan to get full insights.
+2026-05-19T18:45:25.5661628Z > Get more help at https://help.gradle.org.
+2026-05-19T18:45:25.5662120Z 
+2026-05-19T18:45:25.5662411Z BUILD FAILED in 1m 42s
+2026-05-19T18:45:26.0161396Z Running Gradle task 'assembleRelease'...                          103.1s
+2026-05-19T18:45:26.0207293Z Gradle task assembleRelease failed with exit code 1
+2026-05-19T18:45:26.0272012Z ##[error]Process completed with exit code 1.

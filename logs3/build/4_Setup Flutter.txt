@@ -1,0 +1,87 @@
+﻿2026-05-19T18:56:17.7079617Z ##[group]Run subosito/flutter-action@v2
+2026-05-19T18:56:17.7079952Z with:
+2026-05-19T18:56:17.7080158Z   flutter-version: 3.22.0
+2026-05-19T18:56:17.7080387Z   channel: stable
+2026-05-19T18:56:17.7080671Z   cache: true
+2026-05-19T18:56:17.7080950Z   architecture: X64
+2026-05-19T18:56:17.7081250Z   pub-cache-path: default
+2026-05-19T18:56:17.7081553Z   dry-run: false
+2026-05-19T18:56:17.7081923Z   git-source: https://github.com/flutter/flutter.git
+2026-05-19T18:56:17.7082360Z env:
+2026-05-19T18:56:17.7082721Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:17.7083525Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:17.7084015Z ##[endgroup]
+2026-05-19T18:56:17.7186417Z ##[group]Run chmod +x "$GITHUB_ACTION_PATH/setup.sh"
+2026-05-19T18:56:17.7186900Z [36;1mchmod +x "$GITHUB_ACTION_PATH/setup.sh"[0m
+2026-05-19T18:56:17.7231010Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-05-19T18:56:17.7231391Z env:
+2026-05-19T18:56:17.7231786Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:17.7232217Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:17.7232551Z ##[endgroup]
+2026-05-19T18:56:17.7380755Z ##[group]Run $GITHUB_ACTION_PATH/setup.sh -p \
+2026-05-19T18:56:17.7381168Z [36;1m$GITHUB_ACTION_PATH/setup.sh -p \[0m
+2026-05-19T18:56:17.7381455Z [36;1m  -n '3.22.0' \[0m
+2026-05-19T18:56:17.7381676Z [36;1m  -f '' \[0m
+2026-05-19T18:56:17.7381875Z [36;1m  -a 'X64' \[0m
+2026-05-19T18:56:17.7382069Z [36;1m  -k '' \[0m
+2026-05-19T18:56:17.7382257Z [36;1m  -c '' \[0m
+2026-05-19T18:56:17.7382444Z [36;1m  -l '' \[0m
+2026-05-19T18:56:17.7382631Z [36;1m  -d 'default' \[0m
+2026-05-19T18:56:17.7382953Z [36;1m  -g 'https://github.com/flutter/flutter.git' \[0m
+2026-05-19T18:56:17.7383931Z [36;1m  stable[0m
+2026-05-19T18:56:17.7420510Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-05-19T18:56:17.7420865Z env:
+2026-05-19T18:56:17.7421130Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:17.7421728Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:17.7422063Z ##[endgroup]
+2026-05-19T18:56:18.0279816Z ##[group]Run actions/cache@v5
+2026-05-19T18:56:18.0280107Z with:
+2026-05-19T18:56:18.0280341Z   path: /opt/hostedtoolcache/flutter/stable-3.22.0-x64
+2026-05-19T18:56:18.0280786Z   key: flutter-linux-stable-3.22.0-x64-5dcb86f68f239346676ceb1ed1ea385bd215fba1
+2026-05-19T18:56:18.0281186Z   enableCrossOsArchive: false
+2026-05-19T18:56:18.0281427Z   fail-on-cache-miss: false
+2026-05-19T18:56:18.0281647Z   lookup-only: false
+2026-05-19T18:56:18.0281852Z   save-always: false
+2026-05-19T18:56:18.0282044Z env:
+2026-05-19T18:56:18.0282285Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:18.0282679Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:18.0283000Z ##[endgroup]
+2026-05-19T18:56:18.2260398Z Cache hit for: flutter-linux-stable-3.22.0-x64-5dcb86f68f239346676ceb1ed1ea385bd215fba1
+2026-05-19T18:56:19.2924736Z Received 251658240 of 892618388 (28.2%), 238.3 MBs/sec
+2026-05-19T18:56:20.2886566Z Received 520093696 of 892618388 (58.3%), 247.0 MBs/sec
+2026-05-19T18:56:21.2895382Z Received 784334848 of 892618388 (87.9%), 248.6 MBs/sec
+2026-05-19T18:56:21.7872365Z Received 892618388 of 892618388 (100.0%), 242.8 MBs/sec
+2026-05-19T18:56:21.7875047Z Cache Size: ~851 MB (892618388 B)
+2026-05-19T18:56:21.7916580Z [command]/usr/bin/tar -xf /home/runner/work/_temp/414c03a7-b55a-407e-9a82-46df7e322b7a/cache.tzst -P -C /home/runner/work/fund_app/fund_app --use-compress-program unzstd
+2026-05-19T18:56:24.7337563Z Cache restored successfully
+2026-05-19T18:56:24.9614158Z Cache restored from key: flutter-linux-stable-3.22.0-x64-5dcb86f68f239346676ceb1ed1ea385bd215fba1
+2026-05-19T18:56:25.0469725Z ##[group]Run actions/cache@v5
+2026-05-19T18:56:25.0470000Z with:
+2026-05-19T18:56:25.0470222Z   path: /home/runner/.pub-cache
+2026-05-19T18:56:25.0470925Z   key: flutter-pub-linux-stable-3.22.0-x64-5dcb86f68f239346676ceb1ed1ea385bd215fba1-
+2026-05-19T18:56:25.0471381Z   enableCrossOsArchive: false
+2026-05-19T18:56:25.0471630Z   fail-on-cache-miss: false
+2026-05-19T18:56:25.0471865Z   lookup-only: false
+2026-05-19T18:56:25.0472068Z   save-always: false
+2026-05-19T18:56:25.0472266Z env:
+2026-05-19T18:56:25.0472520Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:25.0472923Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:25.0473669Z ##[endgroup]
+2026-05-19T18:56:25.2534079Z Cache hit for: flutter-pub-linux-stable-3.22.0-x64-5dcb86f68f239346676ceb1ed1ea385bd215fba1-
+2026-05-19T18:56:25.5458216Z Received 21196475 of 21196475 (100.0%), 89.8 MBs/sec
+2026-05-19T18:56:25.5458810Z Cache Size: ~20 MB (21196475 B)
+2026-05-19T18:56:25.5484738Z [command]/usr/bin/tar -xf /home/runner/work/_temp/8d3c4d19-071d-4b5f-bfac-572d0372285d/cache.tzst -P -C /home/runner/work/fund_app/fund_app --use-compress-program unzstd
+2026-05-19T18:56:25.9001480Z Cache restored successfully
+2026-05-19T18:56:25.9094414Z Cache restored from key: flutter-pub-linux-stable-3.22.0-x64-5dcb86f68f239346676ceb1ed1ea385bd215fba1-
+2026-05-19T18:56:25.9217089Z ##[group]Run $GITHUB_ACTION_PATH/setup.sh \
+2026-05-19T18:56:25.9217490Z [36;1m$GITHUB_ACTION_PATH/setup.sh \[0m
+2026-05-19T18:56:25.9217772Z [36;1m  -n '3.22.0' \[0m
+2026-05-19T18:56:25.9218010Z [36;1m  -a 'x64' \[0m
+2026-05-19T18:56:25.9218322Z [36;1m  -c '/opt/hostedtoolcache/flutter/stable-3.22.0-x64' \[0m
+2026-05-19T18:56:25.9218680Z [36;1m  -d '/home/runner/.pub-cache' \[0m
+2026-05-19T18:56:25.9218941Z [36;1m  stable[0m
+2026-05-19T18:56:25.9255690Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-05-19T18:56:25.9256051Z env:
+2026-05-19T18:56:25.9256329Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:25.9256753Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:56:25.9257084Z ##[endgroup]

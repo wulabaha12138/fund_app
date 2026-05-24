@@ -1,0 +1,11 @@
+{
+  "tag": "V1_holdings_working",
+  "message": "V1: fundamentals working - fund name, nav, holdings display OK. Regex with triple-quoted string for Dart 3 compat.",
+  "object": "d4f513aa8f8b5593f6b2c2ff520e19a6946c54ef",
+  "type": "commit",
+  "tagger": {
+    "name": "assistant",
+    "email": "assistant@fund.app",
+    "date": "2026-05-20T02:20:00+08:00"
+  }
+}

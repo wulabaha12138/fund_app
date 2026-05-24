@@ -1,0 +1,75 @@
+﻿2026-05-19T18:43:40.6119540Z ##[group]Run flutter pub get
+2026-05-19T18:43:40.6120050Z [36;1mflutter pub get[0m
+2026-05-19T18:43:40.6159068Z shell: /usr/bin/bash -e {0}
+2026-05-19T18:43:40.6159323Z env:
+2026-05-19T18:43:40.6159586Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:43:40.6160000Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:43:40.6160441Z   FLUTTER_ROOT: /opt/hostedtoolcache/flutter/stable-3.22.0-x64/flutter
+2026-05-19T18:43:40.6160797Z   PUB_CACHE: /home/runner/.pub-cache
+2026-05-19T18:43:40.6161039Z ##[endgroup]
+2026-05-19T18:43:40.8810650Z 
+2026-05-19T18:43:40.8824633Z   ╔════════════════════════════════════════════════════════════════════════════╗
+2026-05-19T18:43:40.8825797Z   ║                 Welcome to Flutter! - https://flutter.dev                  ║
+2026-05-19T18:43:40.8826640Z   ║                                                                            ║
+2026-05-19T18:43:40.8827481Z   ║ The Flutter tool uses Google Analytics to anonymously report feature usage ║
+2026-05-19T18:43:40.8828505Z   ║ statistics and basic crash reports. This data is used to help improve      ║
+2026-05-19T18:43:40.8829375Z   ║ Flutter tools over time.                                                   ║
+2026-05-19T18:43:40.8830049Z   ║                                                                            ║
+2026-05-19T18:43:40.8830896Z   ║ Flutter tool analytics are not sent on the very first run. To disable      ║
+2026-05-19T18:43:40.8831949Z   ║ reporting, type 'flutter config --no-analytics'. To display the current    ║
+2026-05-19T18:43:40.8832911Z   ║ setting, type 'flutter config'. If you opt out of analytics, an opt-out    ║
+2026-05-19T18:43:40.8834057Z   ║ event will be sent, and then no further information will be sent by the    ║
+2026-05-19T18:43:40.8834964Z   ║ Flutter tool.                                                              ║
+2026-05-19T18:43:40.8835741Z   ║                                                                            ║
+2026-05-19T18:43:40.8836655Z   ║ By downloading the Flutter SDK, you agree to the Google Terms of Service.  ║
+2026-05-19T18:43:40.8837704Z   ║ The Google Privacy Policy describes how data is handled in this service.   ║
+2026-05-19T18:43:40.8838549Z   ║                                                                            ║
+2026-05-19T18:43:40.8839404Z   ║ Moreover, Flutter includes the Dart SDK, which may send usage metrics and  ║
+2026-05-19T18:43:40.8840436Z   ║ crash reports to Google.                                                   ║
+2026-05-19T18:43:40.8841301Z   ║                                                                            ║
+2026-05-19T18:43:40.8842162Z   ║ Read about data we send with crash reports:                                ║
+2026-05-19T18:43:40.8843175Z   ║ https://flutter.dev/docs/reference/crash-reporting                         ║
+2026-05-19T18:43:40.8844531Z   ║                                                                            ║
+2026-05-19T18:43:40.8845381Z   ║ See Google's privacy policy:                                               ║
+2026-05-19T18:43:40.8846369Z   ║ https://policies.google.com/privacy                                        ║
+2026-05-19T18:43:40.8847384Z   ║                                                                            ║
+2026-05-19T18:43:40.8848237Z   ║ To disable animations in this tool, use                                    ║
+2026-05-19T18:43:40.8849206Z   ║ 'flutter config --no-cli-animations'.                                      ║
+2026-05-19T18:43:40.8850397Z   ╚════════════════════════════════════════════════════════════════════════════╝
+2026-05-19T18:43:40.8851232Z 
+2026-05-19T18:43:41.1261486Z Resolving dependencies...
+2026-05-19T18:43:41.8122338Z Downloading packages...
+2026-05-19T18:43:42.2695221Z + async 2.11.0 (2.13.1 available)
+2026-05-19T18:43:42.2696502Z + boolean_selector 2.1.1 (2.1.2 available)
+2026-05-19T18:43:42.2697368Z + characters 1.3.0 (1.4.1 available)
+2026-05-19T18:43:42.2697883Z + clock 1.1.1 (1.1.2 available)
+2026-05-19T18:43:42.2699276Z + collection 1.18.0 (1.19.1 available)
+2026-05-19T18:43:42.2699732Z + csslib 1.0.2
+2026-05-19T18:43:42.2700074Z + fake_async 1.3.1 (1.3.3 available)
+2026-05-19T18:43:42.2700488Z + flutter 0.0.0 from sdk flutter
+2026-05-19T18:43:42.2700915Z + flutter_test 0.0.0 from sdk flutter
+2026-05-19T18:43:42.2701296Z + html 0.15.6
+2026-05-19T18:43:42.2701490Z + http 1.6.0
+2026-05-19T18:43:42.2701690Z + http_parser 4.0.2 (4.1.2 available)
+2026-05-19T18:43:42.2702181Z + intl 0.19.0 (0.20.2 available)
+2026-05-19T18:43:42.2702642Z + leak_tracker 10.0.4 (11.0.2 available)
+2026-05-19T18:43:42.2703239Z + leak_tracker_flutter_testing 3.0.3 (3.0.10 available)
+2026-05-19T18:43:42.2704161Z + leak_tracker_testing 3.0.1 (3.0.2 available)
+2026-05-19T18:43:42.2704638Z + matcher 0.12.16+1 (0.12.20 available)
+2026-05-19T18:43:42.2705105Z + material_color_utilities 0.8.0 (0.13.0 available)
+2026-05-19T18:43:42.2705589Z + meta 1.12.0 (1.18.2 available)
+2026-05-19T18:43:42.2705981Z + path 1.9.0 (1.9.1 available)
+2026-05-19T18:43:42.2706404Z + sky_engine 0.0.99 from sdk flutter
+2026-05-19T18:43:42.2706840Z + source_span 1.10.0 (1.10.2 available)
+2026-05-19T18:43:42.2707300Z + stack_trace 1.11.1 (1.12.1 available)
+2026-05-19T18:43:42.2707729Z + stream_channel 2.1.2 (2.1.4 available)
+2026-05-19T18:43:42.2708162Z + string_scanner 1.2.0 (1.4.1 available)
+2026-05-19T18:43:42.2708600Z + term_glyph 1.2.1 (1.2.2 available)
+2026-05-19T18:43:42.2709040Z + test_api 0.7.0 (0.7.12 available)
+2026-05-19T18:43:42.2709458Z + typed_data 1.3.2 (1.4.0 available)
+2026-05-19T18:43:42.2709906Z + vector_math 2.1.4 (2.3.0 available)
+2026-05-19T18:43:42.2710366Z + vm_service 14.2.1 (15.2.0 available)
+2026-05-19T18:43:42.2710782Z + web 1.1.1
+2026-05-19T18:43:42.2715567Z Changed 31 dependencies!
+2026-05-19T18:43:42.2728238Z 24 packages have newer versions incompatible with dependency constraints.
+2026-05-19T18:43:42.2728992Z Try `flutter pub outdated` for more information.

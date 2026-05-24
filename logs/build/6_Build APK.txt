@@ -1,0 +1,42 @@
+﻿2026-05-19T18:40:08.4949059Z ##[group]Run flutter build apk --release
+2026-05-19T18:40:08.4949416Z [36;1mflutter build apk --release[0m
+2026-05-19T18:40:08.4969607Z shell: /usr/bin/bash -e {0}
+2026-05-19T18:40:08.4969882Z env:
+2026-05-19T18:40:08.4970164Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:40:08.4970567Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+2026-05-19T18:40:08.4970998Z   FLUTTER_ROOT: /opt/hostedtoolcache/flutter/stable-3.22.0-x64/flutter
+2026-05-19T18:40:08.4971347Z   PUB_CACHE: /home/runner/.pub-cache
+2026-05-19T18:40:08.4971601Z ##[endgroup]
+2026-05-19T18:40:08.8197105Z 
+2026-05-19T18:41:32.0213923Z Running Gradle task 'assembleRelease'...                        
+2026-05-19T18:41:32.0221366Z lib/main.dart:176:13: Error: Expected '(' after this.
+2026-05-19T18:41:32.0225113Z       const pattern = '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''';
+2026-05-19T18:41:32.0225933Z             ^^^^^^^
+2026-05-19T18:41:32.0227510Z lib/main.dart:176:13: Error: Couldn't find constructor 'pattern'.
+2026-05-19T18:41:32.0228665Z       const pattern = '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''';
+2026-05-19T18:41:32.0229708Z             ^^^^^^^
+2026-05-19T18:41:32.0230288Z lib/main.dart:176:21: Error: Can't assign to this.
+2026-05-19T18:41:32.0231377Z       const pattern = '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''';
+2026-05-19T18:41:32.0232325Z                     ^
+2026-05-19T18:41:32.0233062Z lib/main.dart:176:152: Error: Expected ')' before this.
+2026-05-19T18:41:32.0234111Z       const pattern = '''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''';
+2026-05-19T18:41:32.0235201Z                                                                                           ^
+2026-05-19T18:41:35.8117199Z Target kernel_snapshot failed: Exception
+2026-05-19T18:41:35.9137937Z 
+2026-05-19T18:41:35.9138279Z 
+2026-05-19T18:41:35.9138979Z FAILURE: Build failed with an exception.
+2026-05-19T18:41:35.9139541Z 
+2026-05-19T18:41:35.9139802Z * What went wrong:
+2026-05-19T18:41:35.9140430Z Execution failed for task ':app:compileFlutterBuildRelease'.
+2026-05-19T18:41:35.9141633Z > Process 'command '/opt/hostedtoolcache/flutter/stable-3.22.0-x64/flutter/bin/flutter'' finished with non-zero exit value 1
+2026-05-19T18:41:35.9142732Z 
+2026-05-19T18:41:35.9142971Z * Try:
+2026-05-19T18:41:35.9143500Z > Run with --stacktrace option to get the stack trace.
+2026-05-19T18:41:35.9144172Z > Run with --info or --debug option to get more log output.
+2026-05-19T18:41:35.9144834Z > Run with --scan to get full insights.
+2026-05-19T18:41:35.9145440Z > Get more help at https://help.gradle.org.
+2026-05-19T18:41:35.9145899Z 
+2026-05-19T18:41:35.9146204Z BUILD FAILED in 1m 26s
+2026-05-19T18:41:36.3253422Z Running Gradle task 'assembleRelease'...                           87.5s
+2026-05-19T18:41:36.3291227Z Gradle task assembleRelease failed with exit code 1
+2026-05-19T18:41:36.3340859Z ##[error]Process completed with exit code 1.
