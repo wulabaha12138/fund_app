@@ -255,20 +255,38 @@ class FundApi {
       final nameMatch = RegExp(r'<title>([^<]+?)\(\d{6}\)').firstMatch(html);
       final fundName = nameMatch?.group(1)?.trim() ?? '基金$fundCode';
       String? nav, navDate;
+      // 先尝试找完整的 yyyy-MM-dd 格式的净值日期
       final navMatch = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
       if (navMatch != null) {
         navDate = navMatch.group(1);
         nav = navMatch.group(2);
       } else {
+        // 部分页面格式如 (05-22)
         final navMatch2 = RegExp(r'单位净值[^)]*?\((\d+-\d+)\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
         if (navMatch2 != null) {
           navDate = navMatch2.group(1);
           nav = navMatch2.group(2);
         }
       }
+      // 提取实际涨跌幅：在 NAV 数值之后紧跟的涨跌幅百分比
+      // HTML 格式：<span class="fix_dwjz">4.5074</span><span>(</span><span class="fix_zzl">-0.64%</span>
       double? actualChange;
-      final changeMatch = RegExp(r'>([+-]?\d+\.?\d*)%<').firstMatch(html);
-      if (changeMatch != null) actualChange = double.tryParse(changeMatch.group(1)!);
+      if (nav != null) {
+        // 方法1：在 nav 数值附近找紧随其后的涨跌幅数字（允许中间有标签）
+        final navEscaped = RegExp.escape(nav);
+        final nearbyChange = RegExp('$navEscaped[^0-9]*?([+-]?\\d+\\.?\\d*)%').firstMatch(html);
+        if (nearbyChange != null) {
+          actualChange = double.tryParse(nearbyChange.group(1)!);
+        }
+        // 方法2：找 dataOfFund 区域内的第一个涨跌幅百分比
+        if (actualChange == null) {
+          final dataZone = RegExp(r'dataOfFund.*?单位净值.*?([+-]?\d+\.?\d*)%',
+              dotAll: true).firstMatch(html);
+          if (dataZone != null) {
+            actualChange = double.tryParse(dataZone.group(1)!);
+          }
+        }
+      }
       return {'fundName': fundName, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
     } catch (e) {
       return {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};
@@ -445,7 +463,12 @@ class _HomePageState extends State<HomePage> {
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
     _autoRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
-      if (mounted && _savedFunds.isNotEmpty) _refreshAll();
+      if (!mounted || _savedFunds.isEmpty) return;
+      // 仅在交易时间内自动刷新（9:30-15:00，周一至周五）
+      final session = FundApi.getSessionLabel();
+      if (session == '交易中' || session == '午休') {
+        _refreshAll();
+      }
     });
   }
 
@@ -926,11 +949,11 @@ class _HomePageState extends State<HomePage> {
                         child: Container(
                           width: 22,
                           height: 22,
-                          decoration: const BoxDecoration(
-                            color: Color(0x22EF4444),
+                          decoration: BoxDecoration(
+                            color: kTextMuted.withValues(alpha: 0.15),
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.close, size: 14, color: Color(0xFFEF4444)),
+                          child: Icon(Icons.close, size: 14, color: kTextMuted),
                         ),
                       ),
                   ],
@@ -940,7 +963,7 @@ class _HomePageState extends State<HomePage> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 左侧：净值 + 涨跌幅
+                      // 左侧：净值 + 涨跌幅（可伸缩）
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -965,9 +988,12 @@ class _HomePageState extends State<HomePage> {
                                 _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
                                 if (data.estimatedNav != null) ...[
                                   const SizedBox(width: 10),
-                                  Text(
-                                    '≈ ${FundApi.formatTruncated(data.estimatedNav!, 4)}',
-                                    style: const TextStyle(fontSize: 12, color: kTextMuted),
+                                  Flexible(
+                                    child: Text(
+                                      '≈ ${FundApi.formatTruncated(data.estimatedNav!, 4)}',
+                                      style: const TextStyle(fontSize: 12, color: kTextMuted),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
                                 ],
                               ],
@@ -976,8 +1002,29 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      // 右侧：持有金额 + 收益
-                      if (saved.amount > 0) ..._buildAmountAndEarnings(code, saved.amount, data) else
+                      // 右侧：持有金额 + 收益（固定宽度，不挤压左侧）
+                      if (saved.amount > 0)
+                        SizedBox(
+                          width: 140,
+                          child: Align(
+                            alignment: Alignment.topRight,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                GestureDetector(
+                                  onTap: () => _editAmount(code, saved.amount),
+                                  child: Text(
+                                    '持有金额：${FundApi.formatAmount(saved.amount)}',
+                                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                ..._buildEarningsPart(data, saved.amount),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
                         GestureDetector(
                           onTap: () => _editAmount(code, 0),
                           child: Text(
@@ -1091,7 +1138,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  List<Widget> _buildAmountAndEarnings(String code, double amount, FundData data) {
+  List<Widget> _buildEarningsPart(FundData data, double amount) {
     final isFinalValue = data.isFinal && data.nav != null;
     final change = isFinalValue ? (data.actualChange ?? data.estimatedChange) : data.estimatedChange;
     final earnings = amount * change / 100;
@@ -1100,22 +1147,9 @@ class _HomePageState extends State<HomePage> {
     final earnLabel = isFinalValue ? '最终收益' : '预估收益';
 
     return [
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          GestureDetector(
-            onTap: () => _editAmount(code, amount),
-            child: Text(
-              '持有金额：${FundApi.formatAmount(amount)}',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '$earnLabel：$sign${FundApi.formatTruncated(earnings, 2)}',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor),
-          ),
-        ],
+      Text(
+        '$earnLabel：$sign${FundApi.formatTruncated(earnings, 2)}',
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor),
       ),
     ];
   }
