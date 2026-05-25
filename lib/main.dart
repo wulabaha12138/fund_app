@@ -825,25 +825,19 @@ class _HomePageState extends State<HomePage> {
         // Summary bar
         if (_savedFunds.isNotEmpty && _results.values.any((d) => d != null))
           _buildSummaryBar(),
-        // Fund list
+        // Fund table
         Expanded(
           child: _savedFunds.isEmpty
               ? const Center(child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)))
               : RefreshIndicator(
                   onRefresh: () async => _refreshAll(force: true),
-                  child: ReorderableListView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
-                    itemCount: _savedFunds.length,
-                    buildDefaultDragHandles: true,
-                    proxyDecorator: (child, index, animation) => child,
-                    onReorder: (oldIndex, newIndex) {
-                      setState(() { if (newIndex > oldIndex) newIndex--;
-                        final item = _savedFunds.removeAt(oldIndex);
-                        _savedFunds.insert(newIndex, item);
-                      });
-                      FundStore.save(_savedFunds);
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
+                    itemCount: _savedFunds.length + 1, // +1 for table header
+                    itemBuilder: (ctx, i) {
+                      if (i == 0) return _buildTableHeader();
+                      return _buildFundRow(_savedFunds[i - 1]);
                     },
-                    itemBuilder: (ctx, i) => _buildFundCard(_savedFunds[i]),
                   ),
                 ),
         ),
@@ -855,53 +849,72 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSummaryBar() {
     final totalHoldings = _totalHoldings();
     final totalEarnings = _totalEarnings();
-    final hasAnyData = _results.values.any((d) => d != null);
-
-    if (!hasAnyData || totalHoldings <= 0) return const SizedBox.shrink();
+    if (totalHoldings <= 0) return const SizedBox.shrink();
 
     final earnColor = totalEarnings >= 0 ? kRedUp : kGreenDown;
     final earnSign = totalEarnings >= 0 ? '+' : '';
-    final estimateLabel = _hasAnyEstimated ? '（预估）' : '';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      margin: const EdgeInsets.fromLTRB(0, 4, 0, 2),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kBorder),
+        border: Border(bottom: BorderSide(color: kBorder)),
       ),
       child: Row(
         children: [
-          // Total holdings
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('持有金额', style: TextStyle(fontSize: 11, color: kTextMuted)),
-                const SizedBox(height: 2),
-                Text('¥${FundApi.formatAmount(totalHoldings)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ],
-            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('持有金额', style: TextStyle(fontSize: 11, color: kTextMuted)),
+              const SizedBox(height: 1),
+              Text('¥${FundApi.formatAmount(totalHoldings)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ]),
           ),
-          // Total earnings
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                const Text('总收益', style: TextStyle(fontSize: 11, color: kTextMuted)),
+                if (_hasAnyEstimated) ...[const SizedBox(width: 4), _buildEstimateTag()],
+              ]),
+              const SizedBox(height: 1),
+              Text('$earnSign¥${FundApi.formatAmount(totalEarnings)}',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: earnColor)),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Table Header ──
+  Widget _buildTableHeader() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+      decoration: BoxDecoration(
+        color: kHeaderBg,
+        border: Border(bottom: BorderSide(color: kBorder)),
+      ),
+      child: Row(
+        children: [
+          // Column 1: 名称 (flex: 3)
+          Expanded(
+            flex: 3,
+            child: Text('名称', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMuted)),
+          ),
+          // Column 2: 金额/昨日收益 (flex: 3)
+          Expanded(
+            flex: 3,
+            child: Text('金额/昨日收益', textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMuted)),
+          ),
+          // Column 3: 今日收益率/收益 (flex: 4)
+          Expanded(
+            flex: 4,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    const Text('总收益', style: TextStyle(fontSize: 11, color: kTextMuted)),
-                    if (_hasAnyEstimated) ...[
-                      const SizedBox(width: 4),
-                      _buildEstimateTag(),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text('$earnSign¥${FundApi.formatAmount(totalEarnings)}',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: earnColor)),
+                Text('今日收益率/收益', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMuted)),
               ],
             ),
           ),
@@ -910,260 +923,195 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ── Fund Card (redesigned with table layout) ──
-  Widget _buildFundCard(SavedFund saved) {
+  // ── Fund Row (table row style) ──
+  Widget _buildFundRow(SavedFund saved) {
     final code = saved.code;
     final data = _results[code];
     final isLoading = _loading[code] == true;
     final isExpanded = _expanded[code] ?? false;
     final isSelected = _selectedCodes.contains(code);
-
-    // Amount for this fund
     final amount = _getTodayAmount(code);
-
-    // Earnings calculation
     final earnings = data != null && amount > 0 ? amount * data.currentChange / 100.0 : 0.0;
     final earnColor = earnings >= 0 ? kRedUp : kGreenDown;
     final earnSign = earnings >= 0 ? '+' : '';
 
-    return GestureDetector(
-      key: ValueKey(code),
-      child: Card(
-        margin: const EdgeInsets.only(bottom: 10),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: isSelected ? const BorderSide(color: kRedUp, width: 2) : BorderSide.none,
-        ),
-        elevation: 1,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () {
-            if (_selectionMode) {
-              setState(() { if (_selectedCodes.contains(code)) { _selectedCodes.remove(code); if (_selectedCodes.isEmpty) _selectionMode = false; } else { _selectedCodes.add(code); } });
-            } else if (data == null && !isLoading) {
-              _querySingle(code, forceRefresh: true);
-            }
-          },
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── Header row: name + code | status + delete ──
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Fund name + code (fixed width area)
-                    SizedBox(
-                      width: MediaQuery.of(context).size.width * 0.36 < 140 ? 140 : MediaQuery.of(context).size.width * 0.36,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            data?.fundName ?? '查询中…',
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 1),
-                          Text(code, style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                        ],
-                      ),
-                    ),
-                    const Spacer(),
-                    // Status + loading + delete
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        if (data != null)
-                          Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                        const SizedBox(height: 2),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (isLoading)
-                              const Padding(
-                                padding: EdgeInsets.only(right: 6),
-                                child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                              ),
-                            if (!_selectionMode)
-                              GestureDetector(
-                                onTap: () => _showDeleteConfirm(code),
-                                child: Container(
-                                  width: 20, height: 20,
-                                  decoration: BoxDecoration(color: kTextMuted.withOpacity(0.15), shape: BoxShape.circle),
-                                  child: Icon(Icons.close, size: 12, color: kTextMuted),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                if (data != null) ...[
-                  const SizedBox(height: 10),
-                  // ── Table: 金额/昨日收益 | 今日收益率/收益 ──
-                  Container(
-                    decoration: BoxDecoration(
-                      color: kHeaderBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    child: Row(
-                      children: [
-                        // Header: 金额/昨日收益
-                        SizedBox(
-                          width: MediaQuery.of(context).size.width * 0.38 < 140 ? 140 : MediaQuery.of(context).size.width * 0.38,
-                          child: const Text('金额/昨日收益', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMuted)),
-                        ),
-                        const Spacer(),
-                        // Header: 今日收益率/收益
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('今日收益率/收益', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMuted)),
-                            if (data.isEstimated) ...[
-                              const SizedBox(width: 4),
-                              _buildEstimateTag(),
-                            ],
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // ── Data row ──
+    return Column(
+      key: ValueKey('row_$code'),
+      children: [
+        Container(
+          color: isSelected ? kRedUp.withValues(alpha: 0.06) : null,
+          child: InkWell(
+            onTap: () {
+              if (_selectionMode) {
+                setState(() {
+                  if (_selectedCodes.contains(code)) { _selectedCodes.remove(code); if (_selectedCodes.isEmpty) _selectionMode = false; }
+                  else _selectedCodes.add(code);
+                });
+              } else if (data == null && !isLoading) {
+                _querySingle(code, forceRefresh: true);
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                children: [
+                  // ── Main 3-column row ──
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Left: 金额 + 昨日收益
-                      SizedBox(
-                        width: MediaQuery.of(context).size.width * 0.38 < 140 ? 140 : MediaQuery.of(context).size.width * 0.38,
+                      // Col 1: 名称 (flex: 3)
+                      Expanded(
+                        flex: 3,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // 持有金额 (clickable to edit)
+                            Row(
+                              children: [
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.22),
+                                  child: Text(
+                                    data?.fundName ?? '查询中…',
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (isLoading)
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 6),
+                                    child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 1),
+                            Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                          ],
+                        ),
+                      ),
+                      // Col 2: 金额/昨日收益 (flex: 3)
+                      Expanded(
+                        flex: 3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
                             GestureDetector(
                               onTap: () => _editAmount(code, amount),
                               child: Text('¥${FundApi.formatAmount(amount)}',
-                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                             ),
-                            const SizedBox(height: 2),
-                            // 昨日收益 (from previous day record)
+                            const SizedBox(height: 1),
                             _buildYesterdayEarnings(code, amount),
                           ],
                         ),
                       ),
-                      const Spacer(),
-                      // Right: 今日涨跌幅 + 今日收益
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          // 今日涨跌幅
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _changeWidget(data.currentChange),
-                              if (data.estimatedNav != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 4),
-                                  child: Text('≈${FundApi.formatTruncated(data.estimatedNav!, 4)}',
-                                      style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          // 今日收益
-                          Text('$earnSign¥${FundApi.formatAmount(earnings)}',
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor)),
-                          if (data.nav != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Text('净值 ${data.nav} (${data.navDate ?? "--"})',
-                                  style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                      // Col 3: 今日收益率/收益 (flex: 4)
+                      Expanded(
+                        flex: 4,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            // 今日涨跌幅
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (data != null && data.isEstimated)
+                                  _buildEstimateTag(),
+                                const SizedBox(width: 4),
+                                _changeWidget(data?.currentChange ?? 0),
+                              ],
                             ),
-                        ],
+                            const SizedBox(height: 1),
+                            // 今日收益
+                            Text('$earnSign¥${FundApi.formatAmount(earnings)}',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor)),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  const Divider(height: 1),
-                  // ── Expandable holdings ──
-                  InkWell(
-                    onTap: () => setState(() => _expanded[code] = !isExpanded),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
+                  // ── Action row: status + delete ──
+                  Row(
+                    children: [
+                      if (data != null)
+                        Text(data.status, style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                      const Spacer(),
+                      if (data != null)
+                        Text(data.updateTime, style: const TextStyle(fontSize: 9, color: kTextMuted)),
+                      const SizedBox(width: 8),
+                      if (!_selectionMode)
+                        GestureDetector(
+                          onTap: () => _showDeleteConfirm(code),
+                          child: Container(
+                            width: 18, height: 18,
+                            decoration: BoxDecoration(color: kTextMuted.withValues(alpha: 0.12), shape: BoxShape.circle),
+                            child: Icon(Icons.close, size: 10, color: kTextMuted),
+                          ),
+                        ),
+                    ],
+                  ),
+                  // ── Expand section (NAV, holdings) ──
+                  if (data != null) ...[
+                    const SizedBox(height: 6),
+                    InkWell(
+                      onTap: () => setState(() => _expanded[code] = !isExpanded),
                       child: Row(children: [
-                        Text('前十大持仓 (${FundApi.formatTruncated(data.totalPct, 1)}%)',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        if (data.nav != null)
+                          Text('净值 ${data.nav} (${data.navDate ?? "--"})',
+                              style: const TextStyle(fontSize: 10, color: kTextMuted)),
                         const Spacer(),
-                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 18, color: kTextMuted),
+                        Text('持仓 (${FundApi.formatTruncated(data.totalPct, 1)}%)',
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 16, color: kTextMuted),
                       ]),
                     ),
-                  ),
-                  if (isExpanded) ...[
-                    const SizedBox(height: 6),
-                    if (data.holdings.isEmpty)
-                      const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 12))
-                    else
-                      ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
+                    if (isExpanded) ...[
+                      const SizedBox(height: 6),
+                      if (data.holdings.isEmpty)
+                        const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 12))
+                      else
+                        ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
+                    ],
+                    if (data.estimatedNav != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text('≈ 预估净值 ${FundApi.formatTruncated(data.estimatedNav!, 4)}',
+                            style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                      ),
                   ],
-                ] else ...[
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: Text('点击加载', style: TextStyle(color: kTextMuted)),
-                  ),
+                  if (data?.networkError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 10, color: Colors.orange)),
+                    ),
                 ],
-                if (data?.networkError != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 10, color: Colors.orange)),
-                  ),
-                if (data != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text('${data.updateTime}', style: const TextStyle(fontSize: 9, color: kTextMuted)),
-                  ),
-              ],
+              ),
             ),
           ),
         ),
-      ),
+        Divider(height: 0, thickness: 0.5, color: kBorder.withValues(alpha: 0.6)),
+      ],
     );
   }
 
   /// Build yesterday's earnings text from previous daily record.
   Widget _buildYesterdayEarnings(String code, double todayAmount) {
-    if (_prevRecords.isEmpty) return const Text('昨日收益：--', style: TextStyle(fontSize: 11, color: kTextMuted));
+    if (_prevRecords.isEmpty) return Text('¥--', style: TextStyle(fontSize: 11, color: kTextMuted));
     final prev = _prevRecords.where((r) => r.fundCode == code).toList();
-    if (prev.isEmpty) return const Text('昨日收益：--', style: TextStyle(fontSize: 11, color: kTextMuted));
+    if (prev.isEmpty) return Text('¥--', style: TextStyle(fontSize: 11, color: kTextMuted));
     final prevRecord = prev.first;
-
-    // Get yesterday's amount
-    final yesterdayKey = prevRecord.dateKey;
-    // Compute yesterday's amount from the daily amounts store
-    // Approximate: today amount / (1 + today's change %) ... but simpler:
-    // Use the stored todayAmount - this is the carryover amount so the
-    // previous amount was (todayAmount - prevEarnings). We already computed
-    // that in _computeTodayAmounts, so we can just show the prev earnings.
-    double prevEarnings = todayAmount * prevRecord.finalChange / 100.0;
-    // To avoid circular reference, let's use: prevAmount = todayAmount / (1 + prevChange/100)
-    // But todayAmount already includes prevEarnings, so: prevEarnings = todayAmount - prevAmount
-    // And prevAmount = todayAmount / (1 + prevEarnings / prevAmount)
-    // This is too circular. Let's use a different approach:
-    // prevAmount was stored in the prev day's amounts
     return FutureBuilder<Map<String, double>>(
       future: DailyStore.loadDailyAmounts(prevRecord.dateKey),
       builder: (ctx, snap) {
         double prevAmount = todayAmount;
+        double prevEarnings = prevAmount * prevRecord.finalChange / 100.0;
         if (snap.hasData && snap.data!.containsKey(code)) {
           prevAmount = snap.data![code]!;
           prevEarnings = prevAmount * prevRecord.finalChange / 100.0;
         }
         final sign = prevEarnings >= 0 ? '+' : '';
         final color = prevEarnings >= 0 ? kRedUp : kGreenDown;
-        return Text('昨日收益：$sign¥${FundApi.formatAmount(prevEarnings)}',
+        return Text('$sign¥${FundApi.formatAmount(prevEarnings)}',
             style: TextStyle(fontSize: 11, color: color));
       },
     );
