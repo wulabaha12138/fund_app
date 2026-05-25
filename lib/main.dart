@@ -30,13 +30,46 @@ class FundApp extends StatelessWidget {
   }
 }
 
+// ── Constants ──
 const Color kRedUp = Color(0xFFEF4444);
 const Color kGreenDown = Color(0xFF10B981);
 const Color kTextMuted = Color(0xFF64748B);
-const Color kCardBg = Color(0xFFFFFFFF);
 const Color kBorder = Color(0xFFE2E8F0);
+const Color kEstimateTagBg = Color(0xFFFFF3E0);
+const Color kEstimateTagText = Color(0xFFE65100);
+const Color kHeaderBg = Color(0xFFF1F5F9);
 
-// ---- Models ----
+// ── Time Helpers ──
+
+bool isTradingDay(DateTime dt) =>
+    dt.weekday >= DateTime.monday && dt.weekday <= DateTime.friday;
+
+String getSessionLabel() {
+  final now = DateTime.now();
+  if (!isTradingDay(now)) return '休市';
+  final t = now.hour * 60 + now.minute;
+  if (t < 9 * 60 + 30) return '未开市';
+  if (t <= 11 * 60 + 30) return '交易中';
+  if (t < 13 * 60) return '午休';
+  if (t <= 15 * 60) return '交易中';
+  return '已收盘';
+}
+
+bool isTradingSession(String session) =>
+    session == '交易中' || session == '午休';
+
+String dateKey(DateTime dt) => DateFormat('yyyy-MM-dd').format(dt);
+
+/// Last trading day before today.
+String lastTradingDayKey(DateTime now) {
+  DateTime d = now.subtract(const Duration(days: 1));
+  int safety = 10;
+  while (safety-- > 0 && !isTradingDay(d)) d = d.subtract(const Duration(days: 1));
+  return dateKey(d);
+}
+
+// ── Models ──
+
 class StockHolding {
   final String name;
   final String code;
@@ -44,36 +77,71 @@ class StockHolding {
   final double? change;
   final String? errorMsg;
   StockHolding({required this.name, required this.code, required this.pct, this.change, this.errorMsg});
+  Map<String, dynamic> toJson() => {'name': name, 'code': code, 'pct': pct, 'change': change};
+  factory StockHolding.fromJson(Map<String, dynamic> j) => StockHolding(
+    name: j['name'] as String,
+    code: j['code'] as String,
+    pct: (j['pct'] as num).toDouble(),
+    change: j['change'] != null ? (j['change'] as num).toDouble() : null,
+  );
 }
 
-class FundData {
-  final String fundName;
+class FundDailyRecord {
+  final String dateKey;
   final String fundCode;
+  final String fundName;
   final String? nav;
   final String? navDate;
-  final double estimatedChange;
-  final double? estimatedNav;
-  final double? actualChange;
+  final double finalChange;
   final bool isFinal;
   final List<StockHolding> holdings;
   final double totalPct;
   final String updateTime;
+
+  FundDailyRecord({
+    required this.dateKey, required this.fundCode, required this.fundName,
+    this.nav, this.navDate, required this.finalChange, required this.isFinal,
+    required this.holdings, required this.totalPct, required this.updateTime,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'dateKey': dateKey, 'fundCode': fundCode, 'fundName': fundName,
+    'nav': nav, 'navDate': navDate, 'finalChange': finalChange, 'isFinal': isFinal,
+    'holdings': holdings.map((h) => h.toJson()).toList(), 'totalPct': totalPct, 'updateTime': updateTime,
+  };
+
+  factory FundDailyRecord.fromJson(Map<String, dynamic> j) => FundDailyRecord(
+    dateKey: j['dateKey'] as String,
+    fundCode: j['fundCode'] as String,
+    fundName: j['fundName'] as String? ?? '基金${j['fundCode']}',
+    nav: j['nav'] as String?, navDate: j['navDate'] as String?,
+    finalChange: (j['finalChange'] as num).toDouble(),
+    isFinal: j['isFinal'] as bool? ?? false,
+    holdings: (j['holdings'] as List?)?.map((e) => StockHolding.fromJson(e as Map<String, dynamic>)).toList() ?? [],
+    totalPct: (j['totalPct'] as num?)?.toDouble() ?? 0,
+    updateTime: j['updateTime'] as String? ?? '',
+  );
+}
+
+class FundDisplayData {
+  final String fundName;
+  final String fundCode;
+  final String? nav;
+  final String? navDate;
+  final double currentChange;
   final String status;
+  final List<StockHolding> holdings;
+  final double totalPct;
+  final String updateTime;
   final String? networkError;
-  FundData({
-    required this.fundName,
-    required this.fundCode,
-    this.nav,
-    this.navDate,
-    required this.estimatedChange,
-    this.estimatedNav,
-    this.actualChange,
-    required this.isFinal,
-    required this.holdings,
-    required this.totalPct,
-    required this.updateTime,
-    required this.status,
-    this.networkError,
+  final bool isEstimated;
+  final double? estimatedNav;
+
+  FundDisplayData({
+    required this.fundName, required this.fundCode, this.nav, this.navDate,
+    required this.currentChange, required this.status, required this.holdings,
+    required this.totalPct, required this.updateTime, this.networkError,
+    required this.isEstimated, this.estimatedNav,
   });
 }
 
@@ -82,228 +150,226 @@ class SavedFund {
   double amount;
   SavedFund({required this.code, this.amount = 0.0});
   Map<String, dynamic> toJson() => {'code': code, 'amount': amount};
-  factory SavedFund.fromJson(Map<String, dynamic> j) => SavedFund(code: j['code'] as String, amount: (j['amount'] as num).toDouble());
+  factory SavedFund.fromJson(Map<String, dynamic> j) =>
+      SavedFund(code: j['code'] as String, amount: (j['amount'] as num).toDouble());
 }
 
-// ---- API ----
+// ── Persistence ──
+
+class DailyStore {
+  static Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
+
+  static Future<void> saveStockChanges(String date, Map<String, double?> changes) async {
+    final prefs = await _prefs;
+    final clean = <String, double>{};
+    changes.forEach((k, v) { if (v != null) clean[k] = v; });
+    await prefs.setString('stock_changes_$date', jsonEncode(clean));
+  }
+
+  static Future<Map<String, double>> loadStockChanges(String date) async {
+    final prefs = await _prefs;
+    final raw = prefs.getString('stock_changes_$date');
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final d = jsonDecode(raw) as Map<String, dynamic>;
+      return d.map((k, v) => MapEntry(k, (v as num).toDouble()));
+    } catch (_) { return {}; }
+  }
+
+  static Future<void> saveFundDailyRecords(String date, List<FundDailyRecord> records) async {
+    final prefs = await _prefs;
+    await prefs.setString('fund_daily_$date', jsonEncode(records.map((r) => r.toJson()).toList()));
+  }
+
+  static Future<List<FundDailyRecord>> loadFundDailyRecords(String date) async {
+    final prefs = await _prefs;
+    final raw = prefs.getString('fund_daily_$date');
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List;
+      return list.map((e) => FundDailyRecord.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) { return []; }
+  }
+
+  static Future<void> saveDailyAmounts(String date, Map<String, double> amounts) async {
+    final prefs = await _prefs;
+    await prefs.setString('daily_amounts_$date', jsonEncode(amounts));
+  }
+
+  static Future<Map<String, double>> loadDailyAmounts(String date) async {
+    final prefs = await _prefs;
+    final raw = prefs.getString('daily_amounts_$date');
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final d = jsonDecode(raw) as Map<String, dynamic>;
+      return d.map((k, v) => MapEntry(k, (v as num).toDouble()));
+    } catch (_) { return {}; }
+  }
+}
+
+// ── API ──
+
 class FundApi {
   static const _timeout = Duration(seconds: 20);
-  static const _userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
+  static const _ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
 
-  static double truncateTo(double value, int decimals) {
-    final factor = _pow10(decimals);
-    return (value * factor).truncateToDouble() / factor;
+  static double truncateTo(double v, int d) {
+    final f = _pow10(d);
+    return (v * f).truncateToDouble() / f;
   }
-  static double _pow10(int n) {
-    double r = 1;
-    for (int i = 0; i < n; i++) r *= 10;
-    return r;
-  }
+  static double _pow10(int n) { double r = 1; for (int i = 0; i < n; i++) r *= 10; return r; }
 
-  static String formatAmount(double value) {
-    final parts = value.toStringAsFixed(2).split('.');
-    final intPart = parts[0];
-    final decPart = parts[1];
-    final buffer = StringBuffer();
-    for (int i = 0; i < intPart.length; i++) {
-      if (i > 0 && (intPart.length - i) % 3 == 0) buffer.write(',');
-      buffer.write(intPart[i]);
+  static String formatAmount(double v) {
+    if (v == 0) return '0.00';
+    final abs = v.abs();
+    final prefix = v < 0 ? '-' : '';
+    final parts = abs.toStringAsFixed(2).split('.');
+    final buf = StringBuffer();
+    for (int i = 0; i < parts[0].length; i++) {
+      if (i > 0 && (parts[0].length - i) % 3 == 0) buf.write(',');
+      buf.write(parts[0][i]);
     }
-    return '$buffer.$decPart';
-  }
-  static String formatTruncated(double value, int decimals) {
-    final truncated = truncateTo(value, decimals);
-    return truncated.toStringAsFixed(decimals);
+    return '$prefix$buf.${parts[1]}';
   }
 
-  static Future<String> _get(String url, {Map<String, String>? headers}) async {
-    headers ??= {
-      'User-Agent': _userAgent,
-      'Referer': 'https://fund.eastmoney.com/',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-      'Accept-Encoding': 'gzip, deflate',
-      'Connection': 'keep-alive',
-    };
-    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');
+  static String formatTruncated(double v, int d) => truncateTo(v, d).toStringAsFixed(d);
+
+  static Future<String> _get(String url, {Map<String, String>? h}) async {
+    h ??= {'User-Agent': _ua, 'Referer': 'https://fund.eastmoney.com/', 'Accept': 'text/html,*/*', 'Accept-Language': 'zh-CN,zh;q=0.9', 'Connection': 'keep-alive'};
     try {
-      final client = http.Client();
-      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);
-      if (response.statusCode == 200) return utf8.decode(response.bodyBytes);
+      final c = http.Client();
+      final r = await c.get(Uri.parse(url.replaceFirst(RegExp(r'^https://'), 'http://')), headers: h).timeout(_timeout);
+      if (r.statusCode == 200) return utf8.decode(r.bodyBytes);
     } catch (_) {}
-    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');
-    final client = http.Client();
+    final c = http.Client();
     try {
-      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);
-      if (response.statusCode == 200) return utf8.decode(response.bodyBytes);
-      throw Exception('HTTP ${response.statusCode}');
-    } finally {
-      client.close();
-    }
+      final r = await c.get(Uri.parse(url.replaceFirst(RegExp(r'^http://'), 'https://')), headers: h).timeout(_timeout);
+      if (r.statusCode == 200) return utf8.decode(r.bodyBytes);
+      throw Exception('HTTP ${r.statusCode}');
+    } finally { c.close(); }
   }
 
-  static Future<Uint8List> _getBytes(String url, {Map<String, String>? headers}) async {
-    headers ??= {'User-Agent': _userAgent, 'Referer': 'https://fund.eastmoney.com/', 'Accept': '*/*'};
-    final httpUrl = url.replaceFirst(RegExp(r'^https://'), 'http://');
+  static Future<Uint8List> _getBytes(String url, {Map<String, String>? h}) async {
+    h ??= {'User-Agent': _ua, 'Referer': 'https://fund.eastmoney.com/', 'Accept': '*/*'};
     try {
-      final client = http.Client();
-      final response = await client.get(Uri.parse(httpUrl), headers: headers).timeout(_timeout);
-      if (response.statusCode == 200) return response.bodyBytes;
+      final c = http.Client();
+      final r = await c.get(Uri.parse(url.replaceFirst(RegExp(r'^https://'), 'http://')), headers: h).timeout(_timeout);
+      if (r.statusCode == 200) return r.bodyBytes;
     } catch (_) {}
-    final httpsUrl = url.replaceFirst(RegExp(r'^http://'), 'https://');
-    final client = http.Client();
+    final c = http.Client();
     try {
-      final response = await client.get(Uri.parse(httpsUrl), headers: headers).timeout(_timeout);
-      if (response.statusCode == 200) return response.bodyBytes;
-      throw Exception('HTTP ${response.statusCode}');
-    } finally {
-      client.close();
-    }
+      final r = await c.get(Uri.parse(url.replaceFirst(RegExp(r'^http://'), 'https://')), headers: h).timeout(_timeout);
+      if (r.statusCode == 200) return r.bodyBytes;
+      throw Exception('HTTP ${r.statusCode}');
+    } finally { c.close(); }
   }
 
-  static String getSessionLabel() {
-    final now = DateTime.now();
-    if (now.weekday > 5) return '休市';
-    final t = now.hour * 60 + now.minute;
-    if (t < 9 * 60 + 30) return '未开市';
-    if (t <= 11 * 60 + 30) return '交易中';
-    if (t < 13 * 60) return '午休';
-    if (t <= 15 * 60) return '交易中';
-    return '已收盘';
-  }
-
-  static bool isSameDay(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return false;
+  static bool isSameDay(String? s) {
+    if (s == null || s.isEmpty) return false;
     try {
-      final parsed = DateFormat('yyyy-MM-dd').parseStrict(dateStr);
-      final now = DateTime.now();
-      return parsed.year == now.year && parsed.month == now.month && parsed.day == now.day;
+      final p = DateFormat('yyyy-MM-dd').parseStrict(s);
+      final n = DateTime.now();
+      return p.year == n.year && p.month == n.month && p.day == n.day;
     } catch (_) { return false; }
   }
 
-  static Future<double?> fetchStockChange(String stockCode) async {
-    String prefix;
-    if (stockCode.startsWith('6')) prefix = 'sh';
-    else if (stockCode.startsWith('8') || stockCode.startsWith('4')) prefix = 'bj';
-    else prefix = 'sz';
-    final url = 'https://qt.gtimg.cn/q=$prefix$stockCode';
+  static Future<double?> fetchStockChange(String code) async {
+    final prefix = code.startsWith('6') ? 'sh' : (code.startsWith('8') || code.startsWith('4') ? 'bj' : 'sz');
     try {
-      final bytes = await _getBytes(url);
+      final bytes = await _getBytes('https://qt.gtimg.cn/q=$prefix$code');
       final parts = <String>[];
-      int start = 0;
+      int s = 0;
       for (int i = 0; i < bytes.length; i++) {
-        if (bytes[i] == 0x7E) {
-          parts.add(utf8.decode(bytes.sublist(start, i), allowMalformed: true));
-          start = i + 1;
-        }
+        if (bytes[i] == 0x7E) { parts.add(utf8.decode(bytes.sublist(s, i), allowMalformed: true)); s = i + 1; }
       }
-      if (start < bytes.length) parts.add(utf8.decode(bytes.sublist(start), allowMalformed: true));
-      for (int idx in [32, 31, 33, 3]) {
+      if (s < bytes.length) parts.add(utf8.decode(bytes.sublist(s), allowMalformed: true));
+      for (final idx in [32, 31, 33, 3]) {
         if (parts.length > idx) {
-          String raw = parts[idx].trim().replaceAll('%', '');
+          final raw = parts[idx].trim().replaceAll('%', '');
           if (raw.isNotEmpty && raw != '--' && raw != '0.00') {
-            final val = double.tryParse(raw);
-            if (val != null && val.abs() < 100) return val;
+            final v = double.tryParse(raw);
+            if (v != null && v.abs() < 100) return v;
           }
         }
       }
       for (int i = 3; i < parts.length && i < 40; i++) {
-        String raw = parts[i].trim().replaceAll('%', '');
+        final raw = parts[i].trim().replaceAll('%', '');
         if (raw.isNotEmpty && raw != '--') {
-          final val = double.tryParse(raw);
-          if (val != null && val.abs() > 0.01 && val.abs() < 30) return val;
+          final v = double.tryParse(raw);
+          if (v != null && v.abs() > 0.01 && v.abs() < 30) return v;
         }
       }
       return null;
-    } catch (e) {
-      throw Exception('$stockCode: $e');
-    }
+    } catch (e) { throw Exception('$code: $e'); }
   }
 
   static Future<List<Map<String, dynamic>>> fetchHoldings(String fundCode) async {
-    final url = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10';
     try {
-      final body = await _get(url);
-      final contentMatch = RegExp(r'content:"([^"]+)"').firstMatch(body);
-      if (contentMatch == null) return [];
-      String content = contentMatch.group(1)!;
-      content = content.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
-      final reg = RegExp(
-        r'''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''',
-        dotAll: true,
-      );
-      final matches = reg.allMatches(content);
-      final holdings = <Map<String, dynamic>>[];
-      for (final m in matches) {
-        final code = m.group(1)!;
-        final name = m.group(2)!.trim();
-        final pct = double.tryParse(m.group(3)!) ?? 0.0;
-        if (code.length == 6 && pct > 0) {
-          holdings.add({'code': code, 'name': name, 'pct': pct});
-        }
-      }
-      return holdings;
-    } catch (e) {
-      return [];
-    }
+      final body = await _get('https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=$fundCode&topline=10');
+      final m = RegExp(r'content:"([^"]+)"').firstMatch(body);
+      if (m == null) return [];
+      String c = m.group(1)!.replaceAll('&nbsp;', ' ').replaceAll('&amp;', '&');
+      final reg = RegExp(r'''<tr.*?><td.*?>\d+</td><td.*?><a[^>]*>(\d{6})</a></td><td.*?><a[^>]*>([^<]+)</a></td>.*?<td[^>]*class=["']tor["']>([\d\.]+)%''', dotAll: true);
+      return reg.allMatches(c).map((m) => <String, dynamic>{'code': m.group(1)!, 'name': m.group(2)!.trim(), 'pct': double.tryParse(m.group(3)!) ?? 0.0}).where((h) => (h['code'] as String).length == 6 && (h['pct'] as double) > 0).toList();
+    } catch (_) { return []; }
   }
 
   static Future<Map<String, dynamic>> fetchBaseInfo(String fundCode) async {
-    final url = 'https://fund.eastmoney.com/$fundCode.html';
     try {
-      final html = await _get(url);
-      final nameMatch = RegExp(r'<title>([^<]+?)\(\d{6}\)').firstMatch(html);
-      final fundName = nameMatch?.group(1)?.trim() ?? '基金$fundCode';
+      final html = await _get('https://fund.eastmoney.com/$fundCode.html');
+      final nm = RegExp(r'<title>([^<]+?)\(\d{6}\)').firstMatch(html);
+      final fundName = nm?.group(1)?.trim() ?? '基金$fundCode';
       String? nav, navDate;
-      // 先尝试找完整的 yyyy-MM-dd 格式的净值日期
-      final navMatch = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
-      if (navMatch != null) {
-        navDate = navMatch.group(1);
-        nav = navMatch.group(2);
-      } else {
-        // 部分页面格式如 (05-22)
-        final navMatch2 = RegExp(r'单位净值[^)]*?\((\d+-\d+)\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
-        if (navMatch2 != null) {
-          navDate = navMatch2.group(1);
-          nav = navMatch2.group(2);
-        }
+      final nm1 = RegExp(r'单位净值[^)]*?\((\d{4}-\d{2}-\d{2})\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
+      if (nm1 != null) { navDate = nm1.group(1); nav = nm1.group(2); }
+      else {
+        final nm2 = RegExp(r'单位净值[^)]*?\((\d+-\d+)\)[^0-9]*?(\d+\.\d+)').firstMatch(html);
+        if (nm2 != null) { navDate = nm2.group(1); nav = nm2.group(2); }
       }
-      // 提取实际涨跌幅：在 NAV 数值之后紧跟的涨跌幅百分比
-      // HTML 格式：<span class="fix_dwjz">4.5074</span><span>(</span><span class="fix_zzl">-0.64%</span>
-      double? actualChange;
+      double? ac;
       if (nav != null) {
-        // 方法1：在 nav 数值附近找紧随其后的涨跌幅数字（允许中间有标签）
-        final navEscaped = RegExp.escape(nav);
-        final nearbyChange = RegExp('$navEscaped[^0-9]*?([+-]?\\d+\\.?\\d*)%').firstMatch(html);
-        if (nearbyChange != null) {
-          actualChange = double.tryParse(nearbyChange.group(1)!);
-        }
-        // 方法2：找 dataOfFund 区域内的第一个涨跌幅百分比
-        if (actualChange == null) {
-          final dataZone = RegExp(r'dataOfFund.*?单位净值.*?([+-]?\d+\.?\d*)%',
-              dotAll: true).firstMatch(html);
-          if (dataZone != null) {
-            actualChange = double.tryParse(dataZone.group(1)!);
-          }
+        final near = RegExp('${RegExp.escape(nav)}[^0-9]*?([+-]?\\d+\\.?\\d*)%').firstMatch(html);
+        if (near != null) ac = double.tryParse(near.group(1)!);
+        if (ac == null) {
+          final dz = RegExp(r'dataOfFund.*?单位净值.*?([+-]?\d+\.?\d*)%', dotAll: true).firstMatch(html);
+          if (dz != null) ac = double.tryParse(dz.group(1)!);
         }
       }
-      return {'fundName': fundName, 'nav': nav, 'navDate': navDate, 'actualChange': actualChange};
-    } catch (e) {
-      return {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};
-    }
+      return {'fundName': fundName, 'nav': nav, 'navDate': navDate, 'actualChange': ac};
+    } catch (_) { return {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null}; }
   }
 
-  static Future<FundData> query(String fundCode) async {
-    String? globalError;
-    final session = getSessionLabel();
+  static Future<FundDisplayData> query({
+    required String fundCode,
+    required List<FundDailyRecord> todayRecords,
+    required List<FundDailyRecord> prevRecords,
+    required Map<String, double> todayStockChanges,
+    required bool forceRefresh,
+  }) async {
     final now = DateTime.now();
+    final today = dateKey(now);
+    final session = getSessionLabel();
     final nowStr = DateFormat('HH:mm').format(now);
+    String? globalError;
 
+    final cached = todayRecords.where((r) => r.fundCode == fundCode).toList();
+
+    // ── Outside trading hours: use cached data (unless force refresh) ──
+    if (!forceRefresh && !isTradingSession(session) && cached.isNotEmpty) {
+      final r = cached.first;
+      return FundDisplayData(
+        fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
+        currentChange: r.finalChange,
+        status: r.isFinal ? '已收盘（最终）' : (session == '已收盘' ? '待公布净值' : session),
+        holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: !r.isFinal,
+      );
+    }
+
+    // ── Fetch live ──
     Map<String, dynamic> base;
-    try {
-      base = await fetchBaseInfo(fundCode);
-    } catch (e) {
-      globalError = '获取基本信息失败: $e';
+    try { base = await fetchBaseInfo(fundCode); }
+    catch (e) {
+      globalError = '基本信息失败: $e';
       base = {'fundName': '基金$fundCode', 'nav': null, 'navDate': null, 'actualChange': null};
     }
     final fundName = base['fundName'];
@@ -311,112 +377,104 @@ class FundApi {
     final navDate = base['navDate'] as String?;
     final actualChange = base['actualChange'] as double?;
 
-    List<Map<String, dynamic>> holdingsRaw = [];
-    try {
-      holdingsRaw = await fetchHoldings(fundCode);
-    } catch (e) {
-      if (globalError == null) globalError = '获取持仓失败: $e';
+    List<Map<String, dynamic>> rawHoldings = [];
+    try { rawHoldings = await fetchHoldings(fundCode); }
+    catch (e) {
+      if (globalError == null) globalError = '持仓失败: $e';
+      if (cached.isNotEmpty) rawHoldings = cached.first.holdings.map((h) => {'code': h.code, 'name': h.name, 'pct': h.pct}).toList();
+      else if (prevRecords.isNotEmpty) {
+        final p = prevRecords.where((r) => r.fundCode == fundCode).toList();
+        if (p.isNotEmpty) rawHoldings = p.first.holdings.map((h) => {'code': h.code, 'name': h.name, 'pct': h.pct}).toList();
+      }
     }
 
     List<StockHolding> holdings = [];
-    double totalPct = 0;
-    double weightedChange = 0;
+    double totalPct = 0, weightedChange = 0;
     int successCount = 0;
-    if (holdingsRaw.isNotEmpty) {
-      for (var h in holdingsRaw) {
-        final pct = h['pct'] as double;
-        totalPct += pct;
-        final code = h['code'];
-        double? change;
-        String? errMsg;
-        try {
-          change = await fetchStockChange(code);
-          if (change == null) errMsg = '解析失败';
-        } catch (e) {
-          errMsg = e.toString();
-        }
-        if (change != null) {
-          weightedChange += pct * change;
-          successCount++;
-        }
-        holdings.add(StockHolding(name: h['name'], code: code, pct: pct, change: change, errorMsg: errMsg));
-      }
-    }
-    double estimatedChange = (totalPct > 0 && successCount > 0) ? weightedChange / 100.0 : 0.0;
-    estimatedChange = truncateTo(estimatedChange, 2);
+    final newChanges = <String, double?>{};
 
+    for (final h in rawHoldings) {
+      final pct = (h['pct'] as num).toDouble();
+      totalPct += pct;
+      final code = h['code'] as String;
+      double? change = todayStockChanges[code];
+      if (change == null) {
+        try { change = await fetchStockChange(code); } catch (_) {}
+        if (change == null && cached.isNotEmpty) {
+          final ch = cached.first.holdings.where((s) => s.code == code).toList();
+          if (ch.isNotEmpty) change = ch.first.change;
+        }
+      }
+      newChanges[code] = change;
+      if (change != null) { weightedChange += pct * change; successCount++; }
+      holdings.add(StockHolding(name: h['name'], code: code, pct: pct, change: change));
+    }
+
+    double estimatedChange = (totalPct > 0 && successCount > 0) ? truncateTo(weightedChange / 100.0, 2) : 0.0;
     final navIsToday = isSameDay(navDate);
 
-    // ========== 核心交易时段逻辑 ==========
-    if (session == '交易中' || session == '午休') {
-      // 盘中：显示估算值
-      return FundData(
-        fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
-        estimatedChange: estimatedChange,
-        estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null,
-        actualChange: null, isFinal: false,
-        holdings: holdings, totalPct: totalPct,
-        updateTime: nowStr, status: session == '午休' ? '午休' : '交易中',
-        networkError: globalError,
-      );
+    FundDailyRecord record;
+    FundDisplayData display;
+
+    if (isTradingSession(session)) {
+      record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
+      display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: session == '午休' ? '午休' : '交易中', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
     } else if (session == '已收盘') {
-      // 收盘后：只有当今日净值已公布时才显示最终值，否则一直显示估算（直到净值公布）
       if (navIsToday && actualChange != null) {
-        // 最终净值已公布
-        return FundData(
-          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
-          estimatedChange: actualChange, estimatedNav: null, actualChange: actualChange,
-          isFinal: true, holdings: holdings, totalPct: totalPct,
-          updateTime: nowStr, status: '已收盘（最终）',
-          networkError: globalError,
-        );
+        record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: actualChange, isFinal: true, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
+        display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange, status: '已收盘（最终）', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: false, networkError: globalError);
       } else {
-        // 净值未公布（无论净值日期是昨天还是今天但actualChange为空），均显示持仓估算值
-        return FundData(
-          fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
-          estimatedChange: estimatedChange,
-          estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null,
-          actualChange: null, isFinal: false,
-          holdings: holdings, totalPct: totalPct,
-          updateTime: nowStr, status: '待公布净值',
-          networkError: globalError,
-        );
+        record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
+        display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: '待公布净值', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
       }
     } else {
-      // 未开市或休市：显示上交易日数据
-      final change = actualChange ?? estimatedChange;
-      final statusText = actualChange != null ? '上交易日' : session;
-      return FundData(
-        fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate,
-        estimatedChange: change, estimatedNav: null, actualChange: actualChange,
-        isFinal: actualChange != null, holdings: holdings, totalPct: totalPct,
-        updateTime: nowStr, status: statusText,
-        networkError: globalError,
-      );
+      // 未开市 / 休市
+      if (prevRecords.isNotEmpty) {
+        final p = prevRecords.where((r) => r.fundCode == fundCode).toList();
+        if (p.isNotEmpty) {
+          final pr = p.first;
+          if (newChanges.isNotEmpty) { final m = Map<String, double>.from(todayStockChanges); newChanges.forEach((k, v) { if (v != null) m[k] = v; }); await DailyStore.saveStockChanges(today, m); }
+          final all = [...todayRecords.where((r) => r.fundCode != fundCode), pr];
+          await DailyStore.saveFundDailyRecords(today, all);
+          return FundDisplayData(fundName: pr.fundName, fundCode: pr.fundCode, nav: pr.nav, navDate: pr.navDate, currentChange: pr.finalChange, status: session, holdings: pr.holdings, totalPct: pr.totalPct, updateTime: pr.updateTime, isEstimated: !pr.isFinal, networkError: globalError);
+        }
+      }
+      record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: actualChange ?? estimatedChange, isFinal: actualChange != null, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
+      display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange ?? estimatedChange, status: session, holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: actualChange == null, networkError: globalError);
     }
+
+    // ── Persist ──
+    if (newChanges.isNotEmpty) {
+      final merged = Map<String, double>.from(todayStockChanges);
+      newChanges.forEach((k, v) { if (v != null) merged[k] = v; });
+      await DailyStore.saveStockChanges(today, merged);
+    }
+    final allToday = [...todayRecords.where((r) => r.fundCode != fundCode), record];
+    await DailyStore.saveFundDailyRecords(today, allToday);
+    return display;
   }
 }
 
-// ---- 持久化 ----
+// ── Fund Store ──
+
 class FundStore {
   static Future<List<SavedFund>> load() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('funds');
     if (raw == null || raw.isEmpty) return [];
-    try {
-      final list = jsonDecode(raw) as List;
-      return list.map((e) => SavedFund.fromJson(e as Map<String, dynamic>)).toList();
-    } catch (_) { return []; }
+    try { final list = jsonDecode(raw) as List; return list.map((e) => SavedFund.fromJson(e as Map<String, dynamic>)).toList(); }
+    catch (_) { return []; }
   }
-
   static Future<void> save(List<SavedFund> funds) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = jsonEncode(funds.map((f) => f.toJson()).toList());
-    await prefs.setString('funds', raw);
+    await prefs.setString('funds', jsonEncode(funds.map((f) => f.toJson()).toList()));
   }
 }
 
-// ---- UI ----
+// ════════════════════════════════════════════════════════════
+//  UI
+// ════════════════════════════════════════════════════════════
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
@@ -425,11 +483,16 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   List<SavedFund> _savedFunds = [];
-  Map<String, FundData?> _results = {};
+  Map<String, FundDisplayData?> _results = {};
   Map<String, bool> _loading = {};
   Map<String, bool> _expanded = {};
   bool _selectionMode = false;
   final Set<String> _selectedCodes = {};
+
+  List<FundDailyRecord> _todayRecords = [];
+  List<FundDailyRecord> _prevRecords = [];
+  Map<String, double> _todayStockChanges = {};
+  Map<String, double> _todayAmounts = {};
 
   final _codeCtrl = TextEditingController();
   final _amountCtrl = TextEditingController();
@@ -437,62 +500,109 @@ class _HomePageState extends State<HomePage> {
   bool _initialLoading = false;
 
   @override
-  void initState() {
-    super.initState();
-    _loadSaved();
-    _startAutoRefresh();
-  }
+  void initState() { super.initState(); _loadSaved(); _startAutoRefresh(); }
 
   @override
-  void dispose() {
-    _autoRefreshTimer?.cancel();
-    _codeCtrl.dispose();
-    _amountCtrl.dispose();
-    super.dispose();
+  void dispose() { _autoRefreshTimer?.cancel(); _codeCtrl.dispose(); _amountCtrl.dispose(); super.dispose(); }
+
+  /// Calculate today's amounts with carryover from previous trading day.
+  Future<void> _computeTodayAmounts() async {
+    if (_savedFunds.isEmpty) return;
+    final today = dateKey(DateTime.now());
+
+    if (_todayAmounts.isNotEmpty) {
+      for (final f in _savedFunds) { if (!_todayAmounts.containsKey(f.code)) _todayAmounts[f.code] = f.amount; }
+      return;
+    }
+
+    final lastDay = lastTradingDayKey(DateTime.now());
+    final prevAmts = await DailyStore.loadDailyAmounts(lastDay);
+    final prevRecs = _prevRecords.isNotEmpty ? _prevRecords : await DailyStore.loadFundDailyRecords(lastDay);
+
+    final newAmts = <String, double>{};
+    for (final f in _savedFunds) {
+      double base = prevAmts[f.code] ?? f.amount;
+      if (base > 0) {
+        final pfr = prevRecs.where((r) => r.fundCode == f.code).toList();
+        if (pfr.isNotEmpty) { base = FundApi.truncateTo(base + base * pfr.first.finalChange / 100.0, 2); }
+      }
+      newAmts[f.code] = base;
+    }
+
+    _todayAmounts = newAmts;
+    await DailyStore.saveDailyAmounts(today, newAmts);
+    for (int i = 0; i < _savedFunds.length; i++) {
+      if (_todayAmounts.containsKey(_savedFunds[i].code)) _savedFunds[i].amount = _todayAmounts[_savedFunds[i].code]!;
+    }
+    await FundStore.save(_savedFunds);
   }
+
+  double _getTodayAmount(String code) => _todayAmounts[code] ?? _savedFunds.where((f) => f.code == code).fold(0.0, (p, f) => f.amount);
+
+  double _totalHoldings() => _savedFunds.fold(0.0, (s, f) => s + _getTodayAmount(f.code));
+  double _totalEarnings() {
+    double t = 0;
+    for (final f in _savedFunds) {
+      final amt = _getTodayAmount(f.code);
+      final data = _results[f.code];
+      if (data != null && amt > 0) t += amt * data.currentChange / 100.0;
+    }
+    return t;
+  }
+  /// Checks if any fund data is estimated (rather than final).
+  bool get _hasAnyEstimated => _savedFunds.any((f) => (_results[f.code]?.isEstimated ?? false) && _results[f.code] != null);
 
   Future<void> _loadSaved() async {
     final funds = await FundStore.load();
-    setState(() {
-      _savedFunds = funds;
-      _initialLoading = false;
-    });
-    if (funds.isNotEmpty) _refreshAll();
+    final now = DateTime.now();
+    final today = dateKey(now);
+    final lastDay = lastTradingDayKey(now);
+
+    _todayRecords = await DailyStore.loadFundDailyRecords(today);
+    _prevRecords = await DailyStore.loadFundDailyRecords(lastDay);
+    _todayStockChanges = await DailyStore.loadStockChanges(today);
+    _todayAmounts = await DailyStore.loadDailyAmounts(today);
+
+    setState(() { _savedFunds = funds; _initialLoading = false; });
+    if (funds.isNotEmpty) {
+      await _computeTodayAmounts();
+      _refreshAll();
+    }
   }
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
     _autoRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (!mounted || _savedFunds.isEmpty) return;
-      // 仅在交易时间内自动刷新（9:30-15:00，周一至周五）
-      final session = FundApi.getSessionLabel();
-      if (session == '交易中' || session == '午休') {
-        _refreshAll();
-      }
+      // Only auto-refresh during trading hours (9:30-15:00 on trading days)
+      final session = getSessionLabel();
+      if (isTradingSession(session)) _refreshAll();
     });
   }
 
-  Future<void> _refreshAll() async {
-    for (var f in _savedFunds) {
-      _querySingle(f.code);
-    }
+  Future<void> _refreshAll({bool force = false}) async {
+    for (var f in _savedFunds) { _querySingle(f.code, forceRefresh: force); }
   }
 
-  Future<void> _querySingle(String code) async {
+  Future<void> _querySingle(String code, {bool forceRefresh = false}) async {
     if (_loading[code] == true) return;
     setState(() => _loading[code] = true);
     try {
-      final result = await FundApi.query(code);
-      setState(() {
-        _results[code] = result;
-        _loading[code] = false;
-      });
+      final result = await FundApi.query(
+        fundCode: code,
+        todayRecords: _todayRecords,
+        prevRecords: _prevRecords,
+        todayStockChanges: _todayStockChanges,
+        forceRefresh: forceRefresh,
+      );
+      setState(() { _results[code] = result; _loading[code] = false; });
+      // Update local records from query result
+      final today = dateKey(DateTime.now());
+      _todayRecords = await DailyStore.loadFundDailyRecords(today);
+      _todayStockChanges = await DailyStore.loadStockChanges(today);
     } catch (e) {
       setState(() {
-        _results[code] = FundData(
-          fundName: code, fundCode: code, estimatedChange: 0, isFinal: false,
-          holdings: [], totalPct: 0, updateTime: '', status: '查询失败', networkError: e.toString(),
-        );
+        _results[code] = FundDisplayData(fundName: code, fundCode: code, currentChange: 0, status: '查询失败', holdings: [], totalPct: 0, updateTime: '', isEstimated: true, networkError: e.toString());
         _loading[code] = false;
       });
     }
@@ -500,109 +610,79 @@ class _HomePageState extends State<HomePage> {
 
   void _addFromBar() {
     final code = _codeCtrl.text.trim();
-    if (code.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));
-      return;
-    }
-    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+    if (code.length != 6 || !RegExp(r'^\d{6}$').hasMatch(code)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));
       return;
     }
     if (_savedFunds.any((f) => f.code == code)) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('基金 $code 已存在列表中，如需修改请在列表中操作'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('基金 $code 已存在列表中，如需修改请在列表中操作')));
       return;
     }
     final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0.0;
-    _codeCtrl.clear();
-    _amountCtrl.clear();
+    _codeCtrl.clear(); _amountCtrl.clear();
     _addFundWithCheck(code, amount);
   }
 
   Future<void> _addFundWithCheck(String code, double amount) async {
     try {
-      final result = await FundApi.query(code);
+      final result = await FundApi.query(fundCode: code, todayRecords: _todayRecords, prevRecords: _prevRecords, todayStockChanges: _todayStockChanges, forceRefresh: true);
       if (result.fundName.startsWith('基金') && result.fundName.contains(code)) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('未查询到基金相关信息，请重新输入代码')));
-        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('未查询到基金相关信息，请重新输入代码')));
         return;
       }
       _addFund(code, amount);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('查询失败: ' + e.toString())));
-      }
-      return;
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('查询失败: $e')));
     }
   }
 
   Future<void> _addFund(String code, double amount) async {
     if (_savedFunds.any((f) => f.code == code)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('基金 $code 已存在列表中')));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('基金 $code 已存在列表中')));
       return;
     }
     _savedFunds.add(SavedFund(code: code, amount: amount));
     _expanded[code] = false;
+    // Also set today's amount
+    _todayAmounts[code] = amount;
+    final today = dateKey(DateTime.now());
+    await DailyStore.saveDailyAmounts(today, _todayAmounts);
     await FundStore.save(_savedFunds);
     setState(() {});
-    _querySingle(code);
+    _querySingle(code, forceRefresh: true);
   }
 
   void _editAmount(String code, double currentAmount) {
-    final ctrl = TextEditingController(
-      text: currentAmount > 0 ? FundApi.formatTruncated(currentAmount, 2) : '',
-    );
+    final ctrl = TextEditingController(text: currentAmount > 0 ? FundApi.formatTruncated(currentAmount, 2) : '');
     showDialog(
       context: context,
       builder: (ctx) {
         Future.microtask(() {
-          if (ctrl.text.isNotEmpty) {
-            ctrl.selection = TextSelection(
-              baseOffset: 0,
-              extentOffset: ctrl.text.length,
-            );
-          }
+          if (ctrl.text.isNotEmpty) ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length);
         });
         return AlertDialog(
-          title: const Text('修改金额'),
-          content: SizedBox(
-            width: 240,
-            child: TextField(
-              controller: ctrl,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '持有金额（元）'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-            ),
-          ),
+          title: const Text('修改持有金额'),
+          content: SizedBox(width: 240, child: TextField(
+            controller: ctrl, autofocus: true,
+            decoration: const InputDecoration(labelText: '持有金额（元）'),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+          )),
           actions: [
-            TextButton(
-              onPressed: () {
-                FocusScope.of(ctx).requestFocus(FocusNode());
-                Navigator.pop(ctx);
-              },
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () {
-                final amt = double.tryParse(ctrl.text.trim()) ?? 0;
-                FocusScope.of(ctx).requestFocus(FocusNode());
-                Navigator.pop(ctx);
-                final idx = _savedFunds.indexWhere((f) => f.code == code);
-                if (idx >= 0) {
-                  setState(() {
-                    _savedFunds[idx] = SavedFund(code: code, amount: amt);
-                  });
-                  FundStore.save(_savedFunds);
-                }
-                if (_results[code] != null) _querySingle(code);
-              },
-              child: const Text('确定'),
-            ),
+            TextButton(onPressed: () { FocusScope.of(ctx).requestFocus(FocusNode()); Navigator.pop(ctx); }, child: const Text('取消')),
+            TextButton(onPressed: () {
+              final amt = double.tryParse(ctrl.text.trim()) ?? 0;
+              FocusScope.of(ctx).requestFocus(FocusNode()); Navigator.pop(ctx);
+              final idx = _savedFunds.indexWhere((f) => f.code == code);
+              if (idx >= 0) {
+                _savedFunds[idx] = SavedFund(code: code, amount: amt);
+                _todayAmounts[code] = amt;
+                final today = dateKey(DateTime.now());
+                DailyStore.saveDailyAmounts(today, _todayAmounts);
+                FundStore.save(_savedFunds);
+              }
+              if (_results[code] != null) _querySingle(code, forceRefresh: true);
+            }, child: const Text('确定')),
           ],
         );
       },
@@ -611,9 +691,10 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _deleteFund(String code) async {
     _savedFunds.removeWhere((f) => f.code == code);
-    _results.remove(code);
-    _loading.remove(code);
-    _expanded.remove(code);
+    _results.remove(code); _loading.remove(code); _expanded.remove(code);
+    _todayAmounts.remove(code);
+    final today = dateKey(DateTime.now());
+    await DailyStore.saveDailyAmounts(today, _todayAmounts);
     await FundStore.save(_savedFunds);
     setState(() {});
   }
@@ -623,16 +704,10 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除所选基金'),
-        content: Text('确定删除选中的 ' + _selectedCodes.length.toString() + ' 只基金吗?'),
+        content: Text('确定删除选中的 ${_selectedCodes.length} 只基金吗?'),
         actions: [
-          TextButton(onPressed: () {
-            FocusScope.of(ctx).requestFocus(FocusNode());
-            Navigator.pop(ctx);
-          }, child: const Text('取消')),
-          TextButton(onPressed: () {
-            Navigator.pop(ctx);
-            _deleteSelected();
-          }, child: const Text('确定', style: TextStyle(color: kRedUp))),
+          TextButton(onPressed: () { FocusScope.of(ctx).requestFocus(FocusNode()); Navigator.pop(ctx); }, child: const Text('取消')),
+          TextButton(onPressed: () { Navigator.pop(ctx); _deleteSelected(); }, child: const Text('确定', style: TextStyle(color: kRedUp))),
         ],
       ),
     );
@@ -641,12 +716,12 @@ class _HomePageState extends State<HomePage> {
   void _deleteSelected() async {
     for (final code in _selectedCodes) {
       _savedFunds.removeWhere((f) => f.code == code);
-      _results.remove(code);
-      _loading.remove(code);
-      _expanded.remove(code);
+      _results.remove(code); _loading.remove(code); _expanded.remove(code);
+      _todayAmounts.remove(code);
     }
-    _selectedCodes.clear();
-    _selectionMode = false;
+    _selectedCodes.clear(); _selectionMode = false;
+    final today = dateKey(DateTime.now());
+    await DailyStore.saveDailyAmounts(today, _todayAmounts);
     await FundStore.save(_savedFunds);
     setState(() {});
   }
@@ -658,78 +733,45 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('添加基金'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: codeCtrl,
-              decoration: const InputDecoration(labelText: '基金代码', border: OutlineInputBorder(), isDense: true),
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              maxLength: 6,
-              buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: amountCtrl,
-              decoration: const InputDecoration(labelText: '持有金额（元，可选）', border: OutlineInputBorder(), isDense: true),
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () {
-            FocusScope.of(ctx).requestFocus(FocusNode());
-            Navigator.pop(ctx);
-          }, child: const Text('取消')),
-          TextButton(
-            onPressed: () {
-              final code = codeCtrl.text.trim();
-              if (code.length != 6) {
-                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码')));
-                return;
-              }
-              if (_savedFunds.any((f) => f.code == code)) {
-                ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('基金 $code 已存在')));
-                return;
-              }
-              final amount = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
-              Navigator.pop(ctx);
-              _addFund(code, amount);
-            },
-            child: const Text('添加'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: codeCtrl,
+            decoration: const InputDecoration(labelText: '基金代码', border: OutlineInputBorder(), isDense: true),
+            keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            maxLength: 6,
+            buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
           ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: amountCtrl,
+            decoration: const InputDecoration(labelText: '持有金额（元，可选）', border: OutlineInputBorder(), isDense: true),
+            keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () { FocusScope.of(ctx).requestFocus(FocusNode()); Navigator.pop(ctx); }, child: const Text('取消')),
+          TextButton(onPressed: () {
+            final code = codeCtrl.text.trim();
+            if (code.length != 6) { ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入6位基金代码'))); return; }
+            if (_savedFunds.any((f) => f.code == code)) { ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('基金 $code 已存在'))); return; }
+            final amount = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+            Navigator.pop(ctx);
+            _addFund(code, amount);
+          }, child: const Text('添加')),
         ],
       ),
     );
   }
 
-  // 顶部状态栏：根据 session 显示不同文字和颜色
   Widget _buildAppBarTitle() {
-    final session = FundApi.getSessionLabel();
-    String text;
-    Color color;
-
-    if (session == '交易中') {
-      text = '交易中';
-      color = kRedUp;
-    } else if (session == '午休') {
-      text = '休息中';
-      color = kTextMuted;
-    } else if (session == '已收盘') {
-      text = '交易已结束';
-      color = kTextMuted;
-    } else if (session == '未开市') {
-      text = '未开市';
-      color = kTextMuted;
-    } else {
-      text = '休市';
-      color = kTextMuted;
-    }
-    return Center(
-      child: Text(text, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: color)),
-    );
+    final session = getSessionLabel();
+    Map<String, dynamic> info;
+    if (session == '交易中') info = {'text': '交易中', 'color': kRedUp};
+    else if (session == '午休') info = {'text': '休息中', 'color': kTextMuted};
+    else if (session == '已收盘') info = {'text': '交易已结束', 'color': kTextMuted};
+    else if (session == '未开市') info = {'text': '未开市', 'color': kTextMuted};
+    else info = {'text': '休市', 'color': kTextMuted};
+    return Center(child: Text(info['text'] as String, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: info['color'] as Color)));
   }
 
   @override
@@ -739,27 +781,13 @@ class _HomePageState extends State<HomePage> {
         title: _buildAppBarTitle(),
         centerTitle: true,
         leading: _selectionMode
-            ? BackButton(
-                onPressed: () {
-                  setState(() {
-                    _selectedCodes.clear();
-                    _selectionMode = false;
-                  });
-                },
-              )
+            ? BackButton(onPressed: () { setState(() { _selectedCodes.clear(); _selectionMode = false; }); })
             : null,
         leadingWidth: _selectionMode ? 48 : 0,
       ),
       body: PopScope(
         canPop: !_selectionMode,
-        onPopInvoked: (didPop) {
-          if (!didPop && _selectionMode) {
-            setState(() {
-              _selectedCodes.clear();
-              _selectionMode = false;
-            });
-          }
-        },
+        onPopInvoked: (didPop) { if (!didPop && _selectionMode) setState(() { _selectedCodes.clear(); _selectionMode = false; }); },
         child: _buildBody(),
       ),
     );
@@ -768,112 +796,48 @@ class _HomePageState extends State<HomePage> {
   Widget _buildBody() {
     return Column(
       children: [
-        // 顶部输入栏
+        // Input bar
         Container(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(bottom: BorderSide(color: kBorder)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: SizedBox(
-                  height: 40,
-                  child: TextField(
-                    controller: _codeCtrl,
-                    decoration: const InputDecoration(
-                      hintText: '基金代码',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    ),
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    maxLength: 6,
-                    buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 3,
-                child: SizedBox(
-                  height: 40,
-                  child: TextField(
-                    controller: _amountCtrl,
-                    decoration: const InputDecoration(
-                      hintText: '金额(元)',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    ),
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline, size: 22),
-                onPressed: _addFromBar,
-                tooltip: '添加基金',
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                padding: EdgeInsets.zero,
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: const Icon(Icons.refresh, size: 22),
-                tooltip: '刷新',
-                onPressed: _refreshAll,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                padding: EdgeInsets.zero,
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                icon: Icon(_selectionMode ? Icons.check_box : Icons.checklist, size: 22),
-                tooltip: _selectionMode ? '完成多选' : '多选',
-                onPressed: () {
-                  setState(() {
-                    if (_selectionMode) {
-                      _selectedCodes.clear();
-                      _selectionMode = false;
-                    } else {
-                      _selectionMode = true;
-                    }
-                  });
-                },
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                padding: EdgeInsets.zero,
-              ),
-              if (_selectionMode)
-                IconButton(
-                  icon: const Icon(Icons.delete_sweep, size: 22, color: Colors.red),
-                  tooltip: '删除所选',
-                  onPressed: _showDeleteSelectedConfirm,
-                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                  padding: EdgeInsets.zero,
-                ),
-            ],
-          ),
+          decoration: const BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: kBorder))),
+          child: Row(children: [
+            Expanded(flex: 3, child: SizedBox(height: 40, child: TextField(
+              controller: _codeCtrl,
+              decoration: const InputDecoration(hintText: '基金代码', border: OutlineInputBorder(), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
+              keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly], maxLength: 6,
+              buildCounter: (_, {required int currentLength, required bool isFocused, int? maxLength}) => null,
+            ))),
+            const SizedBox(width: 8),
+            Expanded(flex: 3, child: SizedBox(height: 40, child: TextField(
+              controller: _amountCtrl,
+              decoration: const InputDecoration(hintText: '金额(元)', border: OutlineInputBorder(), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
+              keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+            ))),
+            const SizedBox(width: 4),
+            IconButton(icon: const Icon(Icons.add_circle_outline, size: 22), onPressed: _addFromBar, tooltip: '添加基金', constraints: const BoxConstraints(minWidth: 40, minHeight: 40), padding: EdgeInsets.zero),
+            const SizedBox(width: 4),
+            IconButton(icon: const Icon(Icons.refresh, size: 22), tooltip: '刷新', onPressed: () => _refreshAll(force: true), constraints: const BoxConstraints(minWidth: 40, minHeight: 40), padding: EdgeInsets.zero),
+            const SizedBox(width: 4),
+            IconButton(icon: Icon(_selectionMode ? Icons.check_box : Icons.checklist, size: 22), tooltip: _selectionMode ? '完成多选' : '多选', onPressed: () { setState(() { if (_selectionMode) { _selectedCodes.clear(); _selectionMode = false; } else { _selectionMode = true; } }); }, constraints: const BoxConstraints(minWidth: 40, minHeight: 40), padding: EdgeInsets.zero),
+            if (_selectionMode) IconButton(icon: const Icon(Icons.delete_sweep, size: 22, color: Colors.red), tooltip: '删除所选', onPressed: _showDeleteSelectedConfirm, constraints: const BoxConstraints(minWidth: 40, minHeight: 40), padding: EdgeInsets.zero),
+          ]),
         ),
-        // 基金列表
+        // Summary bar
+        if (_savedFunds.isNotEmpty && _results.values.any((d) => d != null))
+          _buildSummaryBar(),
+        // Fund list
         Expanded(
           child: _savedFunds.isEmpty
-              ? const Center(
-                  child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)),
-                )
+              ? const Center(child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)))
               : RefreshIndicator(
-                  onRefresh: () async => _refreshAll(),
+                  onRefresh: () async => _refreshAll(force: true),
                   child: ReorderableListView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
                     itemCount: _savedFunds.length,
                     buildDefaultDragHandles: true,
                     proxyDecorator: (child, index, animation) => child,
                     onReorder: (oldIndex, newIndex) {
-                      setState(() {
-                        if (newIndex > oldIndex) newIndex--;
+                      setState(() { if (newIndex > oldIndex) newIndex--;
                         final item = _savedFunds.removeAt(oldIndex);
                         _savedFunds.insert(newIndex, item);
                       });
@@ -887,6 +851,66 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // ── Summary Bar ──
+  Widget _buildSummaryBar() {
+    final totalHoldings = _totalHoldings();
+    final totalEarnings = _totalEarnings();
+    final hasAnyData = _results.values.any((d) => d != null);
+
+    if (!hasAnyData || totalHoldings <= 0) return const SizedBox.shrink();
+
+    final earnColor = totalEarnings >= 0 ? kRedUp : kGreenDown;
+    final earnSign = totalEarnings >= 0 ? '+' : '';
+    final estimateLabel = _hasAnyEstimated ? '（预估）' : '';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder),
+      ),
+      child: Row(
+        children: [
+          // Total holdings
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('持有金额', style: TextStyle(fontSize: 11, color: kTextMuted)),
+                const SizedBox(height: 2),
+                Text('¥${FundApi.formatAmount(totalHoldings)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          // Total earnings
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    const Text('总收益', style: TextStyle(fontSize: 11, color: kTextMuted)),
+                    if (_hasAnyEstimated) ...[
+                      const SizedBox(width: 4),
+                      _buildEstimateTag(),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text('$earnSign¥${FundApi.formatAmount(totalEarnings)}',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: earnColor)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Fund Card (redesigned with table layout) ──
   Widget _buildFundCard(SavedFund saved) {
     final code = saved.code;
     final data = _results[code];
@@ -894,10 +918,18 @@ class _HomePageState extends State<HomePage> {
     final isExpanded = _expanded[code] ?? false;
     final isSelected = _selectedCodes.contains(code);
 
+    // Amount for this fund
+    final amount = _getTodayAmount(code);
+
+    // Earnings calculation
+    final earnings = data != null && amount > 0 ? amount * data.currentChange / 100.0 : 0.0;
+    final earnColor = earnings >= 0 ? kRedUp : kGreenDown;
+    final earnSign = earnings >= 0 ? '+' : '';
+
     return GestureDetector(
       key: ValueKey(code),
       child: Card(
-        margin: const EdgeInsets.only(bottom: 12),
+        margin: const EdgeInsets.only(bottom: 10),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: isSelected ? const BorderSide(color: kRedUp, width: 2) : BorderSide.none,
@@ -907,150 +939,173 @@ class _HomePageState extends State<HomePage> {
           borderRadius: BorderRadius.circular(12),
           onTap: () {
             if (_selectionMode) {
-              setState(() {
-                if (_selectedCodes.contains(code)) {
-                  _selectedCodes.remove(code);
-                  if (_selectedCodes.isEmpty) _selectionMode = false;
-                } else {
-                  _selectedCodes.add(code);
-                }
-              });
+              setState(() { if (_selectedCodes.contains(code)) { _selectedCodes.remove(code); if (_selectedCodes.isEmpty) _selectionMode = false; } else { _selectedCodes.add(code); } });
             } else if (data == null && !isLoading) {
-              _querySingle(code);
+              _querySingle(code, forceRefresh: true);
             }
           },
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 头部：基金名称 + 删除
+                // ── Header row: name + code | status + delete ──
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
+                    // Fund name + code (fixed width area)
+                    SizedBox(
+                      width: MediaQuery.of(context).size.width * 0.36 < 140 ? 140 : MediaQuery.of(context).size.width * 0.36,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             data?.fundName ?? '查询中…',
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          const SizedBox(height: 2),
-                          Text(code, style: const TextStyle(fontSize: 12, color: kTextMuted)),
+                          const SizedBox(height: 1),
+                          Text(code, style: const TextStyle(fontSize: 11, color: kTextMuted)),
                         ],
                       ),
                     ),
-                    if (isLoading)
-                      const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
-                    if (!_selectionMode)
-                      GestureDetector(
-                        onTap: () => _showDeleteConfirm(code),
-                        child: Container(
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            color: kTextMuted.withOpacity(0.15),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.close, size: 14, color: kTextMuted),
+                    const Spacer(),
+                    // Status + loading + delete
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (data != null)
+                          Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
+                        const SizedBox(height: 2),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isLoading)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 6),
+                                child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                              ),
+                            if (!_selectionMode)
+                              GestureDetector(
+                                onTap: () => _showDeleteConfirm(code),
+                                child: Container(
+                                  width: 20, height: 20,
+                                  decoration: BoxDecoration(color: kTextMuted.withOpacity(0.15), shape: BoxShape.circle),
+                                  child: Icon(Icons.close, size: 12, color: kTextMuted),
+                                ),
+                              ),
+                          ],
                         ),
-                      ),
+                      ],
+                    ),
                   ],
                 ),
                 if (data != null) ...[
                   const SizedBox(height: 10),
+                  // ── Table: 金额/昨日收益 | 今日收益率/收益 ──
+                  Container(
+                    decoration: BoxDecoration(
+                      color: kHeaderBg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    child: Row(
+                      children: [
+                        // Header: 金额/昨日收益
+                        SizedBox(
+                          width: MediaQuery.of(context).size.width * 0.38 < 140 ? 140 : MediaQuery.of(context).size.width * 0.38,
+                          child: const Text('金额/昨日收益', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMuted)),
+                        ),
+                        const Spacer(),
+                        // Header: 今日收益率/收益
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('今日收益率/收益', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: kTextMuted)),
+                            if (data.isEstimated) ...[
+                              const SizedBox(width: 4),
+                              _buildEstimateTag(),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // ── Data row ──
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 左侧：净值 + 涨跌幅（可伸缩）
-                      Expanded(
+                      // Left: 金额 + 昨日收益
+                      SizedBox(
+                        width: MediaQuery.of(context).size.width * 0.38 < 140 ? 140 : MediaQuery.of(context).size.width * 0.38,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              children: [
-                                if (data.nav != null)
-                                  Flexible(
-                                    child: Text(
-                                      '净值 ${data.nav!} (${data.navDate ?? "--"})',
-                                      style: const TextStyle(fontSize: 12, color: kTextMuted),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                const SizedBox(width: 6),
-                                Text(data.status, style: const TextStyle(fontSize: 11, color: kTextMuted)),
-                              ],
+                            // 持有金额 (clickable to edit)
+                            GestureDetector(
+                              onTap: () => _editAmount(code, amount),
+                              child: Text('¥${FundApi.formatAmount(amount)}',
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                             ),
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                _changeWidget(data.estimatedChange, data.isFinal ? '' : '预估'),
-                                if (data.estimatedNav != null) ...[
-                                  const SizedBox(width: 10),
-                                  Flexible(
-                                    child: Text(
-                                      '≈ ${FundApi.formatTruncated(data.estimatedNav!, 4)}',
-                                      style: const TextStyle(fontSize: 12, color: kTextMuted),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
+                            const SizedBox(height: 2),
+                            // 昨日收益 (from previous day record)
+                            _buildYesterdayEarnings(code, amount),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      // 右侧：持有金额 + 收益（固定宽度，不挤压左侧）
-                      if (saved.amount > 0)
-                        SizedBox(
-                          width: 140,
-                          child: Align(
-                            alignment: Alignment.topRight,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                GestureDetector(
-                                  onTap: () => _editAmount(code, saved.amount),
-                                  child: Text(
-                                    '持有金额：${FundApi.formatAmount(saved.amount)}',
-                                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
-                                  ),
+                      const Spacer(),
+                      // Right: 今日涨跌幅 + 今日收益
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          // 今日涨跌幅
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _changeWidget(data.currentChange),
+                              if (data.estimatedNav != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 4),
+                                  child: Text('≈${FundApi.formatTruncated(data.estimatedNav!, 4)}',
+                                      style: const TextStyle(fontSize: 11, color: kTextMuted)),
                                 ),
-                                const SizedBox(height: 2),
-                                ..._buildEarningsPart(data, saved.amount),
-                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          // 今日收益
+                          Text('$earnSign¥${FundApi.formatAmount(earnings)}',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor)),
+                          if (data.nav != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text('净值 ${data.nav} (${data.navDate ?? "--"})',
+                                  style: const TextStyle(fontSize: 10, color: kTextMuted)),
                             ),
-                          ),
-                        )
-                      else
-                        GestureDetector(
-                          onTap: () => _editAmount(code, 0),
-                          child: Text(
-                            '点击设置持有金额',
-                            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary, decoration: TextDecoration.underline),
-                          ),
-                        ),
+                        ],
+                      ),
                     ],
                   ),
                   const SizedBox(height: 10),
                   const Divider(height: 1),
+                  // ── Expandable holdings ──
                   InkWell(
                     onTap: () => setState(() => _expanded[code] = !isExpanded),
-                    child: Row(
-                      children: [
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(children: [
                         Text('前十大持仓 (${FundApi.formatTruncated(data.totalPct, 1)}%)',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                         const Spacer(),
-                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 20, color: kTextMuted),
-                      ],
+                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 18, color: kTextMuted),
+                      ]),
                     ),
                   ),
                   if (isExpanded) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     if (data.holdings.isEmpty)
-                      const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 13))
+                      const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 12))
                     else
                       ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
                   ],
@@ -1063,12 +1118,12 @@ class _HomePageState extends State<HomePage> {
                 if (data?.networkError != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
-                    child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 11, color: Colors.orange)),
+                    child: Text('⚠ ${data!.networkError}', style: const TextStyle(fontSize: 10, color: Colors.orange)),
                   ),
                 if (data != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text('${data.updateTime}', style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text('${data.updateTime}', style: const TextStyle(fontSize: 9, color: kTextMuted)),
                   ),
               ],
             ),
@@ -1078,80 +1133,86 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _changeWidget(double change, String label) {
+  /// Build yesterday's earnings text from previous daily record.
+  Widget _buildYesterdayEarnings(String code, double todayAmount) {
+    if (_prevRecords.isEmpty) return const Text('昨日收益：--', style: TextStyle(fontSize: 11, color: kTextMuted));
+    final prev = _prevRecords.where((r) => r.fundCode == code).toList();
+    if (prev.isEmpty) return const Text('昨日收益：--', style: TextStyle(fontSize: 11, color: kTextMuted));
+    final prevRecord = prev.first;
+
+    // Get yesterday's amount
+    final yesterdayKey = prevRecord.dateKey;
+    // Compute yesterday's amount from the daily amounts store
+    // Approximate: today amount / (1 + today's change %) ... but simpler:
+    // Use the stored todayAmount - this is the carryover amount so the
+    // previous amount was (todayAmount - prevEarnings). We already computed
+    // that in _computeTodayAmounts, so we can just show the prev earnings.
+    double prevEarnings = todayAmount * prevRecord.finalChange / 100.0;
+    // To avoid circular reference, let's use: prevAmount = todayAmount / (1 + prevChange/100)
+    // But todayAmount already includes prevEarnings, so: prevEarnings = todayAmount - prevAmount
+    // And prevAmount = todayAmount / (1 + prevEarnings / prevAmount)
+    // This is too circular. Let's use a different approach:
+    // prevAmount was stored in the prev day's amounts
+    return FutureBuilder<Map<String, double>>(
+      future: DailyStore.loadDailyAmounts(prevRecord.dateKey),
+      builder: (ctx, snap) {
+        double prevAmount = todayAmount;
+        if (snap.hasData && snap.data!.containsKey(code)) {
+          prevAmount = snap.data![code]!;
+          prevEarnings = prevAmount * prevRecord.finalChange / 100.0;
+        }
+        final sign = prevEarnings >= 0 ? '+' : '';
+        final color = prevEarnings >= 0 ? kRedUp : kGreenDown;
+        return Text('昨日收益：$sign¥${FundApi.formatAmount(prevEarnings)}',
+            style: TextStyle(fontSize: 11, color: color));
+      },
+    );
+  }
+
+  // ── Widget helpers ──
+
+  Widget _buildEstimateTag() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: kEstimateTagBg,
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text('预估', style: TextStyle(fontSize: 9, color: kEstimateTagText, fontWeight: FontWeight.bold, height: 1)),
+    );
+  }
+
+  Widget _changeWidget(double change) {
     final color = change >= 0 ? kRedUp : kGreenDown;
     final sign = change >= 0 ? '+' : '';
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (label.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: Text(label, style: const TextStyle(fontSize: 11, color: kTextMuted)),
-          ),
-        Text(
-          '$sign${FundApi.formatTruncated(change, 2)}%',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color),
-        ),
-      ],
-    );
+    return Text('$sign${FundApi.formatTruncated(change, 2)}%',
+        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color));
   }
 
   Widget _buildStockRow(int index, StockHolding s) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 20,
-            child: Text('$index', style: const TextStyle(fontSize: 12, color: kTextMuted)),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text(s.name, style: const TextStyle(fontSize: 13)),
-          ),
-          Text('${FundApi.formatTruncated(s.pct, 1)}%', style: const TextStyle(fontSize: 12, color: kTextMuted)),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 70,
-            child: _buildStockChange(s),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(children: [
+        SizedBox(width: 18, child: Text('$index', style: const TextStyle(fontSize: 11, color: kTextMuted))),
+        Expanded(flex: 3, child: Text(s.name, style: const TextStyle(fontSize: 12))),
+        Text('${FundApi.formatTruncated(s.pct, 1)}%', style: const TextStyle(fontSize: 11, color: kTextMuted)),
+        const SizedBox(width: 6),
+        SizedBox(width: 65, child: _buildStockChange(s)),
+      ]),
     );
   }
 
   Widget _buildStockChange(StockHolding s) {
-    bool hasError = s.change == null;
-    double changeVal = s.change ?? 0.0;
-    final color = (!hasError && changeVal >= 0) ? kRedUp : kGreenDown;
-    final sign = (!hasError && changeVal >= 0) ? '+' : '';
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        if (hasError)
-          Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 14, color: Colors.orange))
-        else
-          Text('$sign${FundApi.formatTruncated(changeVal, 2)}%',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-      ],
+    if (s.change == null) {
+      return Tooltip(message: s.errorMsg ?? '失败', child: const Icon(Icons.error_outline, size: 13, color: Colors.orange));
+    }
+    final color = s.change! >= 0 ? kRedUp : kGreenDown;
+    final sign = s.change! >= 0 ? '+' : '';
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Text('$sign${FundApi.formatTruncated(s.change!, 2)}%',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
     );
-  }
-
-  List<Widget> _buildEarningsPart(FundData data, double amount) {
-    final isFinalValue = data.isFinal && data.nav != null;
-    final change = isFinalValue ? (data.actualChange ?? data.estimatedChange) : data.estimatedChange;
-    final earnings = amount * change / 100;
-    final sign = earnings >= 0 ? '+' : '';
-    final earnColor = earnings >= 0 ? kRedUp : kGreenDown;
-    final earnLabel = isFinalValue ? '最终收益' : '预估收益';
-
-    return [
-      Text(
-        '$earnLabel：$sign${FundApi.formatTruncated(earnings, 2)}',
-        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor),
-      ),
-    ];
   }
 
   void _showDeleteConfirm(String code) {
@@ -1159,12 +1220,9 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除基金'),
-        content: Text('确定删除基金 ' + code + ' 吗?'),
+        content: Text('确定删除基金 $code 吗?'),
         actions: [
-          TextButton(onPressed: () {
-            FocusScope.of(ctx).requestFocus(FocusNode());
-            Navigator.pop(ctx);
-          }, child: const Text('取消')),
+          TextButton(onPressed: () { FocusScope.of(ctx).requestFocus(FocusNode()); Navigator.pop(ctx); }, child: const Text('取消')),
           TextButton(onPressed: () { Navigator.pop(ctx); _deleteFund(code); }, child: const Text('确定', style: TextStyle(color: kRedUp))),
         ],
       ),
