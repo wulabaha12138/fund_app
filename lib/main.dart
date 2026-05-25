@@ -820,6 +820,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildBody() {
+    final session = getSessionLabel();
     return Column(
       children: [
         // Input bar
@@ -848,9 +849,8 @@ class _HomePageState extends State<HomePage> {
             if (_selectionMode) IconButton(icon: const Icon(Icons.delete_sweep, size: 22, color: Colors.red), tooltip: '删除所选', onPressed: _showDeleteSelectedConfirm, constraints: const BoxConstraints(minWidth: 40, minHeight: 40), padding: EdgeInsets.zero),
           ]),
         ),
-        // Summary bar
-        if (_savedFunds.isNotEmpty && _results.values.any((d) => d != null))
-          _buildSummaryBar(),
+        // Summary bar — always show
+        _buildSummaryBar(),
         // Fund table
         Expanded(
           child: _savedFunds.isEmpty
@@ -862,7 +862,7 @@ class _HomePageState extends State<HomePage> {
                     itemCount: _savedFunds.length + 1, // +1 for table header
                     itemBuilder: (ctx, i) {
                       if (i == 0) return _buildTableHeader();
-                      return _buildFundRow(_savedFunds[i - 1]);
+                      return _buildFundRow(_savedFunds[i - 1], session);
                     },
                   ),
                 ),
@@ -871,40 +871,49 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ── Summary Bar ──
+  // ── Summary Bar (always visible) ──
   Widget _buildSummaryBar() {
     final totalHoldings = _totalHoldings();
     final totalEarnings = _totalEarnings();
-    if (totalHoldings <= 0) return const SizedBox.shrink();
+    final session = getSessionLabel();
+    final hasActiveData = session == '交易中' || session == '午休' || session == '已收盘';
+    final showData = _savedFunds.isNotEmpty && hasActiveData;
 
     final earnColor = totalEarnings >= 0 ? kRedUp : kGreenDown;
     final earnSign = totalEarnings >= 0 ? '+' : '';
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      margin: const EdgeInsets.fromLTRB(0, 4, 0, 2),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: kBorder)),
+        gradient: LinearGradient(
+          colors: [Color(0xFF1E3A5F), Color(0xFF2C5282)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
       ),
       child: Row(
         children: [
+          // Total holdings
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('持有金额', style: TextStyle(fontSize: 11, color: kTextMuted)),
-              const SizedBox(height: 1),
-              Text('¥${FundApi.formatAmount(totalHoldings)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text('持有金额', style: TextStyle(fontSize: 10, color: Color(0xFF90CDF4))),
+              Text('¥${FundApi.formatAmount(totalHoldings)}',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
             ]),
           ),
+          // Vertical divider
+          Container(width: 1, height: 32, color: Colors.white.withOpacity(0.2), margin: const EdgeInsets.symmetric(horizontal: 12)),
+          // Total earnings
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
               Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                const Text('总收益', style: TextStyle(fontSize: 11, color: kTextMuted)),
-                if (_hasAnyEstimated) ...[const SizedBox(width: 4), _buildEstimateTag()],
+                const Text('总收益', style: TextStyle(fontSize: 10, color: Color(0xFF90CDF4))),
+                if (showData && _hasAnyEstimated) ...[const SizedBox(width: 4), _buildEstimateTagWhite()],
               ]),
-              const SizedBox(height: 1),
-              Text('$earnSign¥${FundApi.formatAmount(totalEarnings)}',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: earnColor)),
+              Text(
+                showData ? '$earnSign¥${FundApi.formatAmount(totalEarnings)}' : '¥0.00',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: showData ? earnColor : Colors.white38),
+              ),
             ]),
           ),
         ],
@@ -915,57 +924,57 @@ class _HomePageState extends State<HomePage> {
   // ── Table Header ──
   Widget _buildTableHeader() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       decoration: BoxDecoration(
-        color: kHeaderBg,
-        border: Border(bottom: BorderSide(color: kBorder)),
+        color: Color(0xFFEDF2F7),
+        border: Border(bottom: BorderSide(color: Color(0xFFCBD5E0), width: 1)),
       ),
       child: Row(
         children: [
-          // Column 1: 名称 (flex: 3)
-          Expanded(
-            flex: 3,
-            child: Text('名称', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMuted)),
-          ),
-          // Column 2: 金额/昨日收益 (flex: 3)
-          Expanded(
-            flex: 3,
-            child: Text('金额/昨日收益', textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMuted)),
-          ),
-          // Column 3: 今日收益率/收益 (flex: 4)
-          Expanded(
-            flex: 4,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('今日收益率/收益', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kTextMuted)),
-              ],
-            ),
-          ),
+          Expanded(flex: 3, child: Text('名称',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
+          Expanded(flex: 3, child: Text('金额/昨日收益', textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
+          Expanded(flex: 4, child: Align(
+            alignment: Alignment.centerRight,
+            child: Text('今日收益率/收益',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568))),
+          )),
         ],
       ),
     );
   }
 
   // ── Fund Row (table row style) ──
-  Widget _buildFundRow(SavedFund saved) {
+  Widget _buildFundRow(SavedFund saved, String session) {
     final code = saved.code;
     final data = _results[code];
     final isLoading = _loading[code] == true;
     final isExpanded = _expanded[code] ?? false;
     final isSelected = _selectedCodes.contains(code);
     final amount = _getTodayAmount(code);
-    final earnings = data != null && amount > 0 ? amount * data.currentChange / 100.0 : 0.0;
+    final hasActiveData = session == '交易中' || session == '午休' || session == '已收盘';
+    // Today's change: only show real data during trading hours or after close
+    final displayChange = data != null && hasActiveData ? data.currentChange : 0.0;
+    final earnings = hasActiveData && data != null && amount > 0 ? amount * data.currentChange / 100.0 : 0.0;
     final earnColor = earnings >= 0 ? kRedUp : kGreenDown;
     final earnSign = earnings >= 0 ? '+' : '';
+
+    // Previous day change for details section
+    double prevChange = 0;
+    bool hasPrevData = false;
+    if (_prevRecords.isNotEmpty) {
+      final prev = _prevRecords.where((r) => r.fundCode == code).toList();
+      if (prev.isNotEmpty) { prevChange = prev.first.finalChange; hasPrevData = true; }
+    }
+    final prevColor = prevChange >= 0 ? kRedUp : kGreenDown;
+    final prevSign = prevChange >= 0 ? '+' : '';
 
     return Column(
       key: ValueKey('row_$code'),
       children: [
         Container(
-          color: isSelected ? kRedUp.withOpacity(0.06) : null,
+          color: isSelected ? const Color(0xFFFFF5F5) : null,
           child: InkWell(
             onTap: () {
               if (_selectionMode) {
@@ -978,14 +987,14 @@ class _HomePageState extends State<HomePage> {
               }
             },
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Column(
                 children: [
-                  // ── Main 3-column row ──
+                  // ── Main 3-column data row ──
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Col 1: 名称 (flex: 3)
+                      // Col 1: 名称
                       Expanded(
                         flex: 3,
                         child: Column(
@@ -997,7 +1006,7 @@ class _HomePageState extends State<HomePage> {
                                   constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.22),
                                   child: Text(
                                     data?.fundName ?? '查询中…',
-                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -1010,11 +1019,11 @@ class _HomePageState extends State<HomePage> {
                               ],
                             ),
                             const SizedBox(height: 1),
-                            Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                            Text(code, style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
                           ],
                         ),
                       ),
-                      // Col 2: 金额/昨日收益 (flex: 3)
+                      // Col 2: 金额/昨日收益
                       Expanded(
                         flex: 3,
                         child: Column(
@@ -1023,88 +1032,111 @@ class _HomePageState extends State<HomePage> {
                             GestureDetector(
                               onTap: () => _editAmount(code, amount),
                               child: Text('¥${FundApi.formatAmount(amount)}',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
                             ),
                             const SizedBox(height: 1),
                             _buildYesterdayEarnings(code, amount),
                           ],
                         ),
                       ),
-                      // Col 3: 今日收益率/收益 (flex: 4)
+                      // Col 3: 今日收益率/收益
                       Expanded(
                         flex: 4,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            // 今日涨跌幅
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
-                                if (data != null && data.isEstimated)
+                                if (data != null && data.isEstimated && hasActiveData)
                                   _buildEstimateTag(),
-                                const SizedBox(width: 4),
-                                _changeWidget(data?.currentChange ?? 0),
+                                if (data != null && hasActiveData) const SizedBox(width: 4),
+                                Text(
+                                  hasActiveData
+                                      ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
+                                      : '0.00%',
+                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
+                                      color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 1),
-                            // 今日收益
-                            Text('$earnSign¥${FundApi.formatAmount(earnings)}',
-                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: earnColor)),
+                            Text(
+                              hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                                  color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
+                            ),
                           ],
                         ),
                       ),
                     ],
                   ),
-                  // ── Action row: status + delete ──
-                  Row(
-                    children: [
-                      if (data != null)
-                        Text(data.status, style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                  const SizedBox(height: 6),
+                  // ── Collapsible details ──
+                  InkWell(
+                    onTap: () => setState(() => _expanded[code] = !isExpanded),
+                    child: Row(children: [
+                      Text('详细信息', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
                       const Spacer(),
-                      if (data != null)
-                        Text(data.updateTime, style: const TextStyle(fontSize: 9, color: kTextMuted)),
-                      const SizedBox(width: 8),
-                      if (!_selectionMode)
-                        GestureDetector(
-                          onTap: () => _showDeleteConfirm(code),
-                          child: Container(
-                            width: 18, height: 18,
-                            decoration: BoxDecoration(color: kTextMuted.withOpacity(0.12), shape: BoxShape.circle),
-                            child: Icon(Icons.close, size: 10, color: kTextMuted),
-                          ),
-                        ),
-                    ],
+                      Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                          size: 18, color: Color(0xFF718096)),
+                    ]),
                   ),
-                  // ── Expand section (NAV, holdings) ──
-                  if (data != null) ...[
-                    const SizedBox(height: 6),
-                    InkWell(
-                      onTap: () => setState(() => _expanded[code] = !isExpanded),
-                      child: Row(children: [
-                        if (data.nav != null)
-                          Text('净值 ${data.nav} (${data.navDate ?? "--"})',
-                              style: const TextStyle(fontSize: 10, color: kTextMuted)),
-                        const Spacer(),
-                        Text('持仓 (${FundApi.formatTruncated(data.totalPct, 1)}%)',
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
-                        Icon(isExpanded ? Icons.expand_less : Icons.expand_more, size: 16, color: kTextMuted),
-                      ]),
-                    ),
-                    if (isExpanded) ...[
-                      const SizedBox(height: 6),
-                      if (data.holdings.isEmpty)
-                        const Text('暂无持仓数据', style: TextStyle(color: kTextMuted, fontSize: 12))
-                      else
-                        ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
-                    ],
-                    if (data.estimatedNav != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text('≈ 预估净值 ${FundApi.formatTruncated(data.estimatedNav!, 4)}',
-                            style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                  if (isExpanded && data != null) ...[
+                    const SizedBox(height: 8),
+                    // Detail info: NAV, prev day change, holdings
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Color(0xFFF7FAFC),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Color(0xFFE2E8F0)),
                       ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // NAV + previous day
+                          Row(children: [
+                            if (data.nav != null)
+                              Expanded(
+                                child: Text('单位净值：${data.nav} (${data.navDate ?? "--"})',
+                                    style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
+                              ),
+                            if (hasPrevData)
+                              Text('上一交易日：$prevSign${FundApi.formatTruncated(prevChange, 2)}%',
+                                  style: TextStyle(fontSize: 11, color: prevColor, fontWeight: FontWeight.w500)),
+                          ]),
+                          if (data.estimatedNav != null) ...[
+                            const SizedBox(height: 4),
+                            Text('≈ 预估净值：${FundApi.formatTruncated(data.estimatedNav!, 4)}',
+                                style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
+                          ],
+                          // Status + update time
+                          const SizedBox(height: 4),
+                          Row(children: [
+                            Text('${data.status}', style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
+                            const Spacer(),
+                            Text('${data.updateTime}', style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
+                          ]),
+                          // Holdings
+                          const SizedBox(height: 6),
+                          Text('前十大持仓 (${FundApi.formatTruncated(data.totalPct, 1)}%)',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF4A5568))),
+                          const SizedBox(height: 4),
+                          if (data.holdings.isEmpty)
+                            const Text('暂无持仓数据', style: TextStyle(fontSize: 11, color: Color(0xFFA0AEC0)))
+                          else
+                            ...data.holdings.asMap().entries.map((e) => _buildStockRow(e.key + 1, e.value)),
+                        ],
+                      ),
+                    ),
                   ],
+                  if (isExpanded && data == null && !isLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text('暂无数据', style: TextStyle(fontSize: 11, color: Color(0xFFA0AEC0))),
+                    ),
                   if (data?.networkError != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -1115,16 +1147,17 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         ),
-        Divider(height: 0, thickness: 0.5, color: kBorder.withOpacity(0.6)),
+        // Separator line
+        Container(height: 1, color: const Color(0xFFE2E8F0)),
       ],
     );
   }
 
   /// Build yesterday's earnings text from previous daily record.
   Widget _buildYesterdayEarnings(String code, double todayAmount) {
-    if (_prevRecords.isEmpty) return Text('¥--', style: TextStyle(fontSize: 11, color: kTextMuted));
+    if (_prevRecords.isEmpty) return Text('¥0.00', style: TextStyle(fontSize: 11, color: Color(0xFFA0AEC0)));
     final prev = _prevRecords.where((r) => r.fundCode == code).toList();
-    if (prev.isEmpty) return Text('¥--', style: TextStyle(fontSize: 11, color: kTextMuted));
+    if (prev.isEmpty) return Text('¥0.00', style: TextStyle(fontSize: 11, color: Color(0xFFA0AEC0)));
     final prevRecord = prev.first;
     return FutureBuilder<Map<String, double>>(
       future: DailyStore.loadDailyAmounts(prevRecord.dateKey),
@@ -1156,11 +1189,15 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _changeWidget(double change) {
-    final color = change >= 0 ? kRedUp : kGreenDown;
-    final sign = change >= 0 ? '+' : '';
-    return Text('$sign${FundApi.formatTruncated(change, 2)}%',
-        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color));
+  Widget _buildEstimateTagWhite() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: Colors.yellow.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text('预估', style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.bold, height: 1)),
+    );
   }
 
   Widget _buildStockRow(int index, StockHolding s) {
