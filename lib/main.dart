@@ -971,6 +971,11 @@ class _HomePageState extends State<HomePage> {
       final prev = _prevRecords.where((r) => r.fundCode == code).toList();
       if (prev.isNotEmpty) { prevChange = prev.first.finalChange; hasPrevData = true; }
     }
+    // Fallback: if no prevRecords but data has a non-estimated currentChange, use it as prev day
+    if (!hasPrevData && data != null && !data.isEstimated) {
+      prevChange = data.currentChange;
+      hasPrevData = true;
+    }
     final prevColor = prevChange >= 0 ? kRedUp : kGreenDown;
     final prevSign = prevChange >= 0 ? '+' : '';
     final prevChangeText = hasPrevData ? '$prevSign${FundApi.formatTruncated(prevChange, 2)}%' : '--';
@@ -1010,94 +1015,102 @@ class _HomePageState extends State<HomePage> {
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Col 1: 名称 (flex: 3)
-                          Expanded(
-                            flex: 3,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        data?.fundName ?? '查询中…',
-                                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
+                      // Main 3-column row with right padding for delete button
+                      Padding(
+                        padding: const EdgeInsets.only(right: 20),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // Col 1: 名称 (flex: 3)
+                            Expanded(
+                              flex: 3,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          data?.fundName ?? '查询中…',
+                                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
+                                        ),
                                       ),
-                                    ),
-                                    if (isLoading)
-                                      const Padding(
-                                        padding: EdgeInsets.only(left: 4),
-                                        child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                      if (isLoading)
+                                        const Padding(
+                                          padding: EdgeInsets.only(left: 4),
+                                          child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                                ],
+                              ),
+                            ),
+                            // Col 2: 金额/昨日收益
+                            Expanded(
+                              flex: 3,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  GestureDetector(
+                                    onTap: () => _editAmount(code, amount),
+                                    child: Text('¥${FundApi.formatAmount(amount)}',
+                                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text('$prevEarnSign¥${FundApi.formatAmount(prevEarnings)}',
+                                      style: TextStyle(fontSize: 11, color: prevEarnColor)),
+                                ],
+                              ),
+                            ),
+                            // Col 3: 今日收益率/收益
+                            Expanded(
+                              flex: 4,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      if (data != null && data.isEstimated && hasActiveData)
+                                        _buildEstimateTag(),
+                                      if (data != null && hasActiveData) const SizedBox(width: 4),
+                                      Text(
+                                        hasActiveData
+                                            ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
+                                            : '0.00%',
+                                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
+                                            color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
                                       ),
-                                  ],
-                                ),
-                                const SizedBox(height: 1),
-                                Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
-                              ],
+                                    ],
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
+                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                                        color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          // Col 2: 金额/昨日收益
-                          Expanded(
-                            flex: 3,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                GestureDetector(
-                                  onTap: () => _editAmount(code, amount),
-                                  child: Text('¥${FundApi.formatAmount(amount)}',
-                                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
-                                ),
-                                const SizedBox(height: 1),
-                                Text('$prevEarnSign¥${FundApi.formatAmount(prevEarnings)}',
-                                    style: TextStyle(fontSize: 11, color: prevEarnColor)),
-                              ],
-                            ),
-                          ),
-                          // Col 3: 今日收益率/收益
-                          Expanded(
-                            flex: 4,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    if (data != null && data.isEstimated && hasActiveData)
-                                      _buildEstimateTag(),
-                                    if (data != null && hasActiveData) const SizedBox(width: 4),
-                                    Text(
-                                      hasActiveData
-                                          ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
-                                          : '0.00%',
-                                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
-                                          color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 1),
-                                Text(
-                                  hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
-                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                                      color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                      // Delete button (top-right, small visible, large hit area)
+                      // Delete button (far top-right, outside the card)
                       if (!_selectionMode)
                         Positioned(
-                          right: -10, top: -8,
+                          right: -14, top: -6,
                           child: GestureDetector(
                             onTap: () => _showDeleteConfirm(code),
                             child: Container(
-                              padding: const EdgeInsets.all(10),
+                              padding: const EdgeInsets.all(12),
+                              alignment: Alignment.center,
                               child: Container(
                                 width: 16, height: 16,
                                 decoration: BoxDecoration(color: kTextMuted.withOpacity(0.15), shape: BoxShape.circle),
