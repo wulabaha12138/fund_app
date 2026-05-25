@@ -652,16 +652,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _addFundWithCheck(String code, double amount) async {
-    try {
-      final result = await FundApi.query(fundCode: code, todayRecords: _todayRecords, prevRecords: _prevRecords, todayStockChanges: _todayStockChanges, forceRefresh: true);
-      if (result.fundName.startsWith('基金') && result.fundName.contains(code)) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('未查询到基金相关信息，请重新输入代码')));
-        return;
-      }
-      _addFund(code, amount);
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('查询失败: $e')));
-    }
+    // Add immediately so the user sees something, then query in background
+    _addFund(code, amount);
   }
 
   Future<void> _addFund(String code, double amount) async {
@@ -671,7 +663,6 @@ class _HomePageState extends State<HomePage> {
     }
     _savedFunds.add(SavedFund(code: code, amount: amount));
     _expanded[code] = false;
-    // Also set today's amount
     _todayAmounts[code] = amount;
     final today = dateKey(DateTime.now());
     await DailyStore.saveDailyAmounts(today, _todayAmounts);
