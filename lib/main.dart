@@ -1194,8 +1194,7 @@ class _HomePageState extends State<HomePage> {
           // Separator line
           Container(height: 1, color: const Color(0xFFE2E8F0)),
         ],
-      ),
-    );
+      );
   }
 
   // ── Widget helpers ──
