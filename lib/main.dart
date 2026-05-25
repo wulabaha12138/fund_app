@@ -857,13 +857,13 @@ class _HomePageState extends State<HomePage> {
                   onRefresh: () async => _refreshAll(force: true),
                   child: ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
-                    // Use per-row drag start listeners so the table header can't be dragged
+                    // Disable default long-press drag; we use custom drag only on fund rows
                     buildDefaultDragHandles: false,
+                    proxyDecorator: (child, index, animation) => child,
                     itemCount: _savedFunds.length + 1, // +1 for table header
                     onReorder: (oldIndex, newIndex) {
-                      // Don't allow placing items before the table header
-                      if (newIndex == 0) return;
-                      if (oldIndex == 0) return;
+                      if (newIndex == 0) return;  // can't drop before header
+                      if (oldIndex <= 0) return;   // header can't be dragged
                       setState(() {
                         final item = _savedFunds.removeAt(oldIndex - 1);
                         _savedFunds.insert(newIndex - 1, item);
@@ -872,7 +872,7 @@ class _HomePageState extends State<HomePage> {
                     },
                     itemBuilder: (ctx, i) {
                       if (i == 0) return _buildTableHeader();
-                      return _buildFundRow(_savedFunds[i - 1], session);
+                      return _buildFundRow(i - 1, _savedFunds[i - 1], session);
                     },
                   ),
                 ),
@@ -953,7 +953,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ── Fund Row (table row style) ──
-  Widget _buildFundRow(SavedFund saved, String session) {
+  Widget _buildFundRow(int listIdx, SavedFund saved, String session) {
     final code = saved.code;
     final data = _results[code];
     final isLoading = _loading[code] == true;
@@ -995,8 +995,8 @@ class _HomePageState extends State<HomePage> {
     final prevEarnColor = prevEarnings >= 0 ? kRedUp : kGreenDown;
 
     return ReorderableDragStartListener(
+      index: listIdx,
       key: ValueKey('row_$code'),
-      index: _savedFunds.indexOf(saved),
       child: Column(
         children: [
           Container(
@@ -1020,9 +1020,9 @@ class _HomePageState extends State<HomePage> {
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      // Main 3-column row with right padding for delete button
+                      // Main 3-column row (no right padding, delete button is outside)
                       Padding(
-                        padding: const EdgeInsets.only(right: 28),
+                        padding: const EdgeInsets.only(right: 0),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
@@ -1107,10 +1107,10 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                       ),
-                      // Delete button (far top-right, outside the card)
+                      // Delete button (outside card, top-right corner)
                       if (!_selectionMode)
                         Positioned(
-                          right: -12, top: -8,
+                          right: -22, top: -6,
                           child: GestureDetector(
                             onTap: () => _showDeleteConfirm(code),
                             child: Container(
