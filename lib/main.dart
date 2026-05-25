@@ -860,17 +860,10 @@ class _HomePageState extends State<HomePage> {
                     buildDefaultDragHandles: false,
                     itemCount: _savedFunds.length + 1, // +1 for table header
                     onReorder: (oldIndex, newIndex) {
+                      if (oldIndex == 0 || newIndex == 0) return;
                       setState(() {
-                        if (oldIndex == 0 || newIndex == 0) return; // can't reorder header
-                        final adjustedOld = oldIndex - 1;
-                        final adjustedNew = newIndex - 1;
-                        if (adjustedNew > adjustedOld) {
-                          final item = _savedFunds.removeAt(adjustedOld);
-                          _savedFunds.insert(adjustedNew, item);
-                        } else {
-                          final item = _savedFunds.removeAt(adjustedOld);
-                          _savedFunds.insert(adjustedNew, item);
-                        }
+                        final item = _savedFunds.removeAt(oldIndex - 1);
+                        _savedFunds.insert(newIndex - 1, item);
                       });
                       FundStore.save(_savedFunds);
                     },
@@ -934,6 +927,7 @@ class _HomePageState extends State<HomePage> {
   // ── Table Header ──
   Widget _buildTableHeader() {
     return Container(
+      key: const ValueKey('table_header'),
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       decoration: BoxDecoration(
         color: Color(0xFFEDF2F7),
