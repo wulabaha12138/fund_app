@@ -264,13 +264,36 @@ class FundApi {
     } finally { c.close(); }
   }
 
+  /// Check if a date string refers to today. Handles both yyyy-MM-dd and MM-dd formats.
   static bool isSameDay(String? s) {
     if (s == null || s.isEmpty) return false;
     try {
-      final p = DateFormat('yyyy-MM-dd').parseStrict(s);
+      DateTime p = DateFormat('yyyy-MM-dd').parseStrict(s);
       final n = DateTime.now();
       return p.year == n.year && p.month == n.month && p.day == n.day;
-    } catch (_) { return false; }
+    } catch (_) {
+      try {
+        // Try MM-dd format (e.g., "05-25")
+        final p = DateFormat('MM-dd').parse(s);
+        final n = DateTime.now();
+        return p.month == n.month && p.day == n.day;
+      } catch (_) {
+        return false;
+      }
+    }
+  }
+
+  /// Returns true if it's likely that the fund NAV has been published for today.
+  /// Typically after 18:00 on a trading day, some funds start publishing.
+  /// By 20:00-21:00 most funds have published.
+  static bool isNavPublishTime() {
+    final now = DateTime.now();
+    if (!isTradingDay(now)) return false;
+    final session = getSessionLabel();
+    if (session != '已收盘') return false;
+    // After 18:00 some funds start publishing; by 20:00 most are out
+    final t = now.hour * 60 + now.minute;
+    return t >= 18 * 60;
   }
 
   static Future<double?> fetchStockChange(String code) async {
@@ -357,12 +380,17 @@ class FundApi {
     // ── Outside trading hours: use cached data (unless force refresh) ──
     if (!forceRefresh && !isTradingSession(session) && cached.isNotEmpty) {
       final r = cached.first;
-      return FundDisplayData(
-        fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
-        currentChange: r.finalChange,
-        status: r.isFinal ? '已收盘（最终）' : (session == '已收盘' ? '待公布净值' : session),
-        holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: !r.isFinal,
-      );
+      // If it's NAV publish time (evening of trading day) and cached data isn't final,
+      // don't return cache — fall through to fetch fresh data from the website.
+      if (r.isFinal || (session != '已收盘') || !isNavPublishTime()) {
+        return FundDisplayData(
+          fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
+          currentChange: r.finalChange,
+          status: r.isFinal ? '已收盘（最终）' : (session == '已收盘' ? '待公布净值' : session),
+          holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: !r.isFinal,
+        );
+      }
+      // Fall through: NAV might be out now, fetch fresh data
     }
 
     // ── Fetch live ──
