@@ -857,7 +857,7 @@ class _HomePageState extends State<HomePage> {
                   onRefresh: () async => _refreshAll(force: true),
                   child: ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
-                    buildDefaultDragHandles: false,
+                    buildDefaultDragHandles: true,
                     itemCount: _savedFunds.length + 1, // +1 for table header
                     onReorder: (oldIndex, newIndex) {
                       if (oldIndex == 0 || newIndex == 0) return;
@@ -1006,119 +1006,127 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Column(
                 children: [
-                  // ── Top row: drag handle + Main 3-column + delete ──
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  // ── Top row: Main 3-column (delete button overlays in Stack) ──
+                  Stack(
+                    clipBehavior: Clip.none,
                     children: [
-                      // Drag handle for reorder
-                      ReorderableDragStartListener(
-                        index: _savedFunds.indexOf(saved),
-                        child: Container(
-                          padding: const EdgeInsets.only(right: 6, top: 6),
-                          child: Icon(Icons.drag_handle, size: 18, color: kTextMuted),
-                        ),
-                      ),
-                      // Col 1: 名称 (flex: 3)
-                      Expanded(
-                        flex: 3,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Col 1: 名称 (flex: 3)
+                          Expanded(
+                            flex: 3,
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(
-                                  child: Text(
-                                    data?.fundName ?? '查询中…',
-                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
-                                  ),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        data?.fundName ?? '查询中…',
+                                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
+                                      ),
+                                    ),
+                                    if (isLoading)
+                                      const Padding(
+                                        padding: EdgeInsets.only(left: 4),
+                                        child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                      ),
+                                  ],
                                 ),
-                                if (isLoading)
-                                  const Padding(
-                                    padding: EdgeInsets.only(left: 4),
-                                    child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-                                  ),
+                                const SizedBox(height: 1),
+                                Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
                               ],
                             ),
-                            const SizedBox(height: 1),
-                            Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
-                          ],
-                        ),
-                      ),
-                      // Col 2: 金额/昨日收益
-                      Expanded(
-                        flex: 3,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            GestureDetector(
-                              onTap: () => _editAmount(code, amount),
-                              child: Text('¥${FundApi.formatAmount(amount)}',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
-                            ),
-                            const SizedBox(height: 1),
-                            Text('$prevEarnSign¥${FundApi.formatAmount(prevEarnings)}',
-                                style: TextStyle(fontSize: 11, color: prevEarnColor)),
-                          ],
-                        ),
-                      ),
-                      // Col 3: 今日收益率/收益
-                      Expanded(
-                        flex: 4,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              mainAxisAlignment: MainAxisAlignment.end,
+                          ),
+                          // Col 2: 金额/昨日收益
+                          Expanded(
+                            flex: 3,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                if (data != null && data.isEstimated && hasActiveData)
-                                  _buildEstimateTag(),
-                                if (data != null && hasActiveData) const SizedBox(width: 4),
+                                GestureDetector(
+                                  onTap: () => _editAmount(code, amount),
+                                  child: Text('¥${FundApi.formatAmount(amount)}',
+                                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
+                                ),
+                                const SizedBox(height: 1),
+                                Text('$prevEarnSign¥${FundApi.formatAmount(prevEarnings)}',
+                                    style: TextStyle(fontSize: 11, color: prevEarnColor)),
+                              ],
+                            ),
+                          ),
+                          // Col 3: 今日收益率/收益
+                          Expanded(
+                            flex: 4,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    if (data != null && data.isEstimated && hasActiveData)
+                                      _buildEstimateTag(),
+                                    if (data != null && hasActiveData) const SizedBox(width: 4),
+                                    Text(
+                                      hasActiveData
+                                          ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
+                                          : '0.00%',
+                                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
+                                          color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 1),
                                 Text(
-                                  hasActiveData
-                                      ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
-                                      : '0.00%',
-                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
-                                      color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
+                                  hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                                      color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 1),
-                            Text(
-                              hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
-                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                                  color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                      // Delete button (right-top corner)
+                      // Delete button (top-right, small visible, large hit area)
                       if (!_selectionMode)
-                        GestureDetector(
-                          onTap: () => _showDeleteConfirm(code),
-                          child: Padding(
-                            padding: const EdgeInsets.only(left: 4),
+                        Positioned(
+                          right: -10, top: -8,
+                          child: GestureDetector(
+                            onTap: () => _showDeleteConfirm(code),
                             child: Container(
-                              width: 22, height: 22,
-                              decoration: BoxDecoration(color: kTextMuted.withOpacity(0.15), shape: BoxShape.circle),
-                              child: Icon(Icons.close, size: 13, color: kTextMuted),
+                              padding: const EdgeInsets.all(10),
+                              child: Container(
+                                width: 16, height: 16,
+                                decoration: BoxDecoration(color: kTextMuted.withOpacity(0.15), shape: BoxShape.circle),
+                                child: Icon(Icons.close, size: 10, color: kTextMuted),
+                              ),
                             ),
                           ),
                         ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  // ── Collapsible details ──
-                  InkWell(
-                    onTap: () => setState(() => _expanded[code] = !isExpanded),
-                    child: Row(children: [
-                      Text('详细信息',
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
-                      const Spacer(),
-                      Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                          size: 18, color: Color(0xFF718096)),
-                    ]),
+                  // ── Collapsible details (right-aligned with arrow) ──
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: InkWell(
+                      onTap: () => setState(() => _expanded[code] = !isExpanded),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('详细信息',
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
+                            const SizedBox(width: 2),
+                            Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                                size: 18, color: Color(0xFF718096)),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                   if (isExpanded && data != null) ...[
                     const SizedBox(height: 8),
