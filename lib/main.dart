@@ -635,6 +635,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _addFromBar() {
+    // Dismiss keyboard
+    FocusScope.of(context).requestFocus(FocusNode());
     final code = _codeCtrl.text.trim();
     if (code.length != 6 || !RegExp(r'^\d{6}$').hasMatch(code)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('代码错误，请重新输入基金代码！')));
@@ -857,9 +859,25 @@ class _HomePageState extends State<HomePage> {
               ? const Center(child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)))
               : RefreshIndicator(
                   onRefresh: () async => _refreshAll(force: true),
-                  child: ListView.builder(
+                  child: ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
+                    buildDefaultDragHandles: false,
                     itemCount: _savedFunds.length + 1, // +1 for table header
+                    onReorder: (oldIndex, newIndex) {
+                      setState(() {
+                        if (oldIndex == 0 || newIndex == 0) return; // can't reorder header
+                        final adjustedOld = oldIndex - 1;
+                        final adjustedNew = newIndex - 1;
+                        if (adjustedNew > adjustedOld) {
+                          final item = _savedFunds.removeAt(adjustedOld);
+                          _savedFunds.insert(adjustedNew, item);
+                        } else {
+                          final item = _savedFunds.removeAt(adjustedOld);
+                          _savedFunds.insert(adjustedNew, item);
+                        }
+                      });
+                      FundStore.save(_savedFunds);
+                    },
                     itemBuilder: (ctx, i) {
                       if (i == 0) return _buildTableHeader();
                       return _buildFundRow(_savedFunds[i - 1], session);
@@ -871,7 +889,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ── Summary Bar (always visible) ──
+  // ── Summary Bar (always visible, white background) ──
   Widget _buildSummaryBar() {
     final totalHoldings = _totalHoldings();
     final totalEarnings = _totalEarnings();
@@ -883,36 +901,32 @@ class _HomePageState extends State<HomePage> {
     final earnSign = totalEarnings >= 0 ? '+' : '';
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF1E3A5F), Color(0xFF2C5282)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: const BoxDecoration(color: Colors.white),
       child: Row(
         children: [
           // Total holdings
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('持有金额', style: TextStyle(fontSize: 10, color: Color(0xFF90CDF4))),
+              const Text('持有金额', style: TextStyle(fontSize: 12, color: kTextMuted)),
+              const SizedBox(height: 2),
               Text('¥${FundApi.formatAmount(totalHoldings)}',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
             ]),
           ),
           // Vertical divider
-          Container(width: 1, height: 32, color: Colors.white.withOpacity(0.2), margin: const EdgeInsets.symmetric(horizontal: 12)),
+          Container(width: 1, height: 36, color: kBorder, margin: const EdgeInsets.symmetric(horizontal: 12)),
           // Total earnings
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
               Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                const Text('总收益', style: TextStyle(fontSize: 10, color: Color(0xFF90CDF4))),
-                if (showData && _hasAnyEstimated) ...[const SizedBox(width: 4), _buildEstimateTagWhite()],
+                const Text('总收益', style: TextStyle(fontSize: 12, color: kTextMuted)),
+                if (showData && _hasAnyEstimated) ...[const SizedBox(width: 4), _buildEstimateTag()],
               ]),
+              const SizedBox(height: 2),
               Text(
                 showData ? '$earnSign¥${FundApi.formatAmount(totalEarnings)}' : '¥0.00',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: showData ? earnColor : Colors.white38),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: showData ? earnColor : kTextMuted),
               ),
             ]),
           ),
@@ -969,6 +983,18 @@ class _HomePageState extends State<HomePage> {
     }
     final prevColor = prevChange >= 0 ? kRedUp : kGreenDown;
     final prevSign = prevChange >= 0 ? '+' : '';
+    final prevChangeText = hasPrevData ? '$prevSign${FundApi.formatTruncated(prevChange, 2)}%' : '--';
+    // Previous day amount for compute
+    double prevAmount = amount;
+    double prevEarnings = 0;
+    if (hasPrevData) {
+      final prev = _prevRecords.where((r) => r.fundCode == code).toList();
+      if (prev.isNotEmpty) {
+        prevEarnings = prevAmount * prev.first.finalChange / 100.0;
+      }
+    }
+    final prevEarnSign = prevEarnings >= 0 ? '+' : '';
+    final prevEarnColor = prevEarnings >= 0 ? kRedUp : kGreenDown;
 
     return Column(
       key: ValueKey('row_$code'),
@@ -990,36 +1016,42 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Column(
                 children: [
-                  // ── Main 3-column data row ──
+                  // ── Top row: drag handle + Main 3-column + delete ──
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Col 1: 名称
+                      // Drag handle for reorder
+                      ReorderableDragStartListener(
+                        index: _savedFunds.indexOf(saved),
+                        child: Container(
+                          padding: const EdgeInsets.only(right: 6, top: 6),
+                          child: Icon(Icons.drag_handle, size: 18, color: kTextMuted),
+                        ),
+                      ),
+                      // Col 1: 名称 (flex: 3)
                       Expanded(
                         flex: 3,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.22),
+                                Expanded(
                                   child: Text(
                                     data?.fundName ?? '查询中…',
                                     style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 if (isLoading)
                                   const Padding(
-                                    padding: EdgeInsets.only(left: 6),
+                                    padding: EdgeInsets.only(left: 4),
                                     child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
                                   ),
                               ],
                             ),
                             const SizedBox(height: 1),
-                            Text(code, style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
+                            Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
                           ],
                         ),
                       ),
@@ -1035,7 +1067,8 @@ class _HomePageState extends State<HomePage> {
                                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
                             ),
                             const SizedBox(height: 1),
-                            _buildYesterdayEarnings(code, amount),
+                            Text('$prevEarnSign¥${FundApi.formatAmount(prevEarnings)}',
+                                style: TextStyle(fontSize: 11, color: prevEarnColor)),
                           ],
                         ),
                       ),
@@ -1070,6 +1103,19 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                       ),
+                      // Delete button (right-top corner)
+                      if (!_selectionMode)
+                        GestureDetector(
+                          onTap: () => _showDeleteConfirm(code),
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Container(
+                              width: 22, height: 22,
+                              decoration: BoxDecoration(color: kTextMuted.withOpacity(0.15), shape: BoxShape.circle),
+                              child: Icon(Icons.close, size: 13, color: kTextMuted),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -1077,7 +1123,8 @@ class _HomePageState extends State<HomePage> {
                   InkWell(
                     onTap: () => setState(() => _expanded[code] = !isExpanded),
                     child: Row(children: [
-                      Text('详细信息', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
+                      Text('详细信息',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
                       const Spacer(),
                       Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                           size: 18, color: Color(0xFF718096)),
@@ -1085,7 +1132,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   if (isExpanded && data != null) ...[
                     const SizedBox(height: 8),
-                    // Detail info: NAV, prev day change, holdings
+                    // Detail info
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
@@ -1096,30 +1143,34 @@ class _HomePageState extends State<HomePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // NAV + previous day
+                          // Previous day change (first in details)
                           Row(children: [
-                            if (data.nav != null)
-                              Expanded(
-                                child: Text('单位净值：${data.nav} (${data.navDate ?? "--"})',
-                                    style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
-                              ),
-                            if (hasPrevData)
-                              Text('上一交易日：$prevSign${FundApi.formatTruncated(prevChange, 2)}%',
-                                  style: TextStyle(fontSize: 11, color: prevColor, fontWeight: FontWeight.w500)),
+                            Text('上一交易日涨跌幅：',
+                                style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
+                            Text(prevChangeText,
+                                style: TextStyle(fontSize: 11, color: prevColor, fontWeight: FontWeight.w600)),
                           ]),
+                          if (data.nav != null) ...[
+                            const SizedBox(height: 4),
+                            Row(children: [
+                              Text('单位净值：${data.nav}',
+                                  style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
+                              const SizedBox(width: 4),
+                              Text('(${data.navDate ?? "--"})',
+                                  style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
+                            ]),
+                          ],
                           if (data.estimatedNav != null) ...[
                             const SizedBox(height: 4),
                             Text('≈ 预估净值：${FundApi.formatTruncated(data.estimatedNav!, 4)}',
                                 style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
                           ],
-                          // Status + update time
                           const SizedBox(height: 4),
                           Row(children: [
                             Text('${data.status}', style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
                             const Spacer(),
                             Text('${data.updateTime}', style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
                           ]),
-                          // Holdings
                           const SizedBox(height: 6),
                           Text('前十大持仓 (${FundApi.formatTruncated(data.totalPct, 1)}%)',
                               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF4A5568))),
@@ -1153,29 +1204,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Build yesterday's earnings text from previous daily record.
-  Widget _buildYesterdayEarnings(String code, double todayAmount) {
-    if (_prevRecords.isEmpty) return Text('¥0.00', style: TextStyle(fontSize: 11, color: Color(0xFFA0AEC0)));
-    final prev = _prevRecords.where((r) => r.fundCode == code).toList();
-    if (prev.isEmpty) return Text('¥0.00', style: TextStyle(fontSize: 11, color: Color(0xFFA0AEC0)));
-    final prevRecord = prev.first;
-    return FutureBuilder<Map<String, double>>(
-      future: DailyStore.loadDailyAmounts(prevRecord.dateKey),
-      builder: (ctx, snap) {
-        double prevAmount = todayAmount;
-        double prevEarnings = prevAmount * prevRecord.finalChange / 100.0;
-        if (snap.hasData && snap.data!.containsKey(code)) {
-          prevAmount = snap.data![code]!;
-          prevEarnings = prevAmount * prevRecord.finalChange / 100.0;
-        }
-        final sign = prevEarnings >= 0 ? '+' : '';
-        final color = prevEarnings >= 0 ? kRedUp : kGreenDown;
-        return Text('$sign¥${FundApi.formatAmount(prevEarnings)}',
-            style: TextStyle(fontSize: 11, color: color));
-      },
-    );
-  }
-
   // ── Widget helpers ──
 
   Widget _buildEstimateTag() {
@@ -1186,17 +1214,6 @@ class _HomePageState extends State<HomePage> {
         borderRadius: BorderRadius.circular(3),
       ),
       child: Text('预估', style: TextStyle(fontSize: 9, color: kEstimateTagText, fontWeight: FontWeight.bold, height: 1)),
-    );
-  }
-
-  Widget _buildEstimateTagWhite() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-      decoration: BoxDecoration(
-        color: Colors.yellow.withOpacity(0.4),
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: Text('预估', style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.bold, height: 1)),
     );
   }
 
@@ -1227,6 +1244,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showDeleteConfirm(String code) {
+    FocusScope.of(context).requestFocus(FocusNode()); // dismiss keyboard
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
