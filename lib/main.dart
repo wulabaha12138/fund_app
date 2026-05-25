@@ -628,7 +628,11 @@ class _HomePageState extends State<HomePage> {
       _todayStockChanges = await DailyStore.loadStockChanges(today);
     } catch (e) {
       setState(() {
-        _results[code] = FundDisplayData(fundName: code, fundCode: code, currentChange: 0, status: '查询失败', holdings: [], totalPct: 0, updateTime: '', isEstimated: true, networkError: e.toString());
+        _results[code] = FundDisplayData(
+          fundName: '基金$code', fundCode: code, currentChange: 0,
+          status: '网络异常', holdings: [], totalPct: 0,
+          updateTime: '', isEstimated: true, networkError: e.toString(),
+        );
         _loading[code] = false;
       });
     }
@@ -652,8 +656,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _addFundWithCheck(String code, double amount) async {
-    // Add immediately so the user sees something, then query in background
-    _addFund(code, amount);
+    await _addFund(code, amount);
   }
 
   Future<void> _addFund(String code, double amount) async {
@@ -668,6 +671,8 @@ class _HomePageState extends State<HomePage> {
     await DailyStore.saveDailyAmounts(today, _todayAmounts);
     await FundStore.save(_savedFunds);
     setState(() {});
+    // Small delay to let the widget rebuild with the new row, then fetch data
+    await Future.delayed(const Duration(milliseconds: 100));
     _querySingle(code, forceRefresh: true);
   }
 
