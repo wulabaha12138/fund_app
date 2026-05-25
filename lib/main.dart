@@ -857,10 +857,13 @@ class _HomePageState extends State<HomePage> {
                   onRefresh: () async => _refreshAll(force: true),
                   child: ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
-                    buildDefaultDragHandles: true,
+                    // Use per-row drag start listeners so the table header can't be dragged
+                    buildDefaultDragHandles: false,
                     itemCount: _savedFunds.length + 1, // +1 for table header
                     onReorder: (oldIndex, newIndex) {
-                      if (oldIndex == 0 || newIndex == 0) return;
+                      // Don't allow placing items before the table header
+                      if (newIndex == 0) return;
+                      if (oldIndex == 0) return;
                       setState(() {
                         final item = _savedFunds.removeAt(oldIndex - 1);
                         _savedFunds.insert(newIndex - 1, item);
@@ -991,10 +994,12 @@ class _HomePageState extends State<HomePage> {
     final prevEarnSign = prevEarnings >= 0 ? '+' : '';
     final prevEarnColor = prevEarnings >= 0 ? kRedUp : kGreenDown;
 
-    return Column(
+    return ReorderableDragStartListener(
       key: ValueKey('row_$code'),
-      children: [
-        Container(
+      index: _savedFunds.indexOf(saved),
+      child: Column(
+        children: [
+          Container(
           color: isSelected ? const Color(0xFFFFF5F5) : null,
           child: InkWell(
             onTap: () {
@@ -1017,7 +1022,7 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       // Main 3-column row with right padding for delete button
                       Padding(
-                        padding: const EdgeInsets.only(right: 20),
+                        padding: const EdgeInsets.only(right: 28),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
@@ -1105,7 +1110,7 @@ class _HomePageState extends State<HomePage> {
                       // Delete button (far top-right, outside the card)
                       if (!_selectionMode)
                         Positioned(
-                          right: -14, top: -6,
+                          right: -12, top: -8,
                           child: GestureDetector(
                             onTap: () => _showDeleteConfirm(code),
                             child: Container(
@@ -1208,10 +1213,11 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
-        ),
-        // Separator line
-        Container(height: 1, color: const Color(0xFFE2E8F0)),
-      ],
+          ), // Container close
+          // Separator line
+          Container(height: 1, color: const Color(0xFFE2E8F0)),
+        ],
+      ),
     );
   }
 
