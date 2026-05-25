@@ -283,19 +283,6 @@ class FundApi {
     }
   }
 
-  /// Returns true if it's likely that the fund NAV has been published for today.
-  /// Typically after 18:00 on a trading day, some funds start publishing.
-  /// By 20:00-21:00 most funds have published.
-  static bool isNavPublishTime() {
-    final now = DateTime.now();
-    if (!isTradingDay(now)) return false;
-    final session = getSessionLabel();
-    if (session != '已收盘') return false;
-    // After 18:00 some funds start publishing; by 20:00 most are out
-    final t = now.hour * 60 + now.minute;
-    return t >= 18 * 60;
-  }
-
   static Future<double?> fetchStockChange(String code) async {
     final prefix = code.startsWith('6') ? 'sh' : (code.startsWith('8') || code.startsWith('4') ? 'bj' : 'sz');
     try {
@@ -380,17 +367,26 @@ class FundApi {
     // ── Outside trading hours: use cached data (unless force refresh) ──
     if (!forceRefresh && !isTradingSession(session) && cached.isNotEmpty) {
       final r = cached.first;
-      // If it's NAV publish time (evening of trading day) and cached data isn't final,
-      // don't return cache — fall through to fetch fresh data from the website.
-      if (r.isFinal || (session != '已收盘') || !isNavPublishTime()) {
+      // If cached data is already final (NAV published), return it.
+      // If session is '已收盘' and NAV wasn't published yet, fall through to check.
+      if (r.isFinal) {
         return FundDisplayData(
           fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
           currentChange: r.finalChange,
-          status: r.isFinal ? '已收盘（最终）' : (session == '已收盘' ? '待公布净值' : session),
+          status: '已收盘（最终）',
+          holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: false,
+        );
+      }
+      if (session != '已收盘') {
+        // 未开市/休市: show cached data
+        return FundDisplayData(
+          fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
+          currentChange: r.finalChange,
+          status: session,
           holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: !r.isFinal,
         );
       }
-      // Fall through: NAV might be out now, fetch fresh data
+      // 已收盘 but cache is not final: fall through to re-fetch (NAV might be out now)
     }
 
     // ── Fetch live ──
@@ -439,7 +435,6 @@ class FundApi {
     }
 
     double estimatedChange = (totalPct > 0 && successCount > 0) ? truncateTo(weightedChange / 100.0, 2) : 0.0;
-    final navIsToday = isSameDay(navDate);
 
     FundDailyRecord record;
     FundDisplayData display;
@@ -448,10 +443,13 @@ class FundApi {
       record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
       display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: session == '午休' ? '午休' : '交易中', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
     } else if (session == '已收盘') {
-      if (navIsToday && actualChange != null) {
+      // After 15:00, whatever actualChange the page returns IS the final NAV.
+      // 东方财富页面不会给预估值 — 要么没有值(null)，要么就是最终值。
+      if (actualChange != null) {
         record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: actualChange, isFinal: true, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
         display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange, status: '已收盘（最终）', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: false, networkError: globalError);
       } else {
+        // 页面还没有更新当日净值，用持仓股票估算(15点后股票涨跌幅已是最终值)
         record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
         display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: '待公布净值', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
       }
@@ -967,7 +965,7 @@ class _HomePageState extends State<HomePage> {
       key: ValueKey('row_$code'),
       children: [
         Container(
-          color: isSelected ? kRedUp.withValues(alpha: 0.06) : null,
+          color: isSelected ? kRedUp.withOpacity(0.06) : null,
           child: InkWell(
             onTap: () {
               if (_selectionMode) {
@@ -1072,7 +1070,7 @@ class _HomePageState extends State<HomePage> {
                           onTap: () => _showDeleteConfirm(code),
                           child: Container(
                             width: 18, height: 18,
-                            decoration: BoxDecoration(color: kTextMuted.withValues(alpha: 0.12), shape: BoxShape.circle),
+                            decoration: BoxDecoration(color: kTextMuted.withOpacity(0.12), shape: BoxShape.circle),
                             child: Icon(Icons.close, size: 10, color: kTextMuted),
                           ),
                         ),
@@ -1117,7 +1115,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         ),
-        Divider(height: 0, thickness: 0.5, color: kBorder.withValues(alpha: 0.6)),
+        Divider(height: 0, thickness: 0.5, color: kBorder.withOpacity(0.6)),
       ],
     );
   }
