@@ -855,21 +855,9 @@ class _HomePageState extends State<HomePage> {
               ? const Center(child: Text('输入基金代码点击 + 添加', style: TextStyle(color: kTextMuted, fontSize: 14)))
               : RefreshIndicator(
                   onRefresh: () async => _refreshAll(force: true),
-                  child: ReorderableListView.builder(
+                  child: ListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
-                    // Disable default long-press drag; we use custom drag only on fund rows
-                    buildDefaultDragHandles: false,
-                    proxyDecorator: (child, index, animation) => child,
                     itemCount: _savedFunds.length + 1, // +1 for table header
-                    onReorder: (oldIndex, newIndex) {
-                      if (newIndex == 0) return;  // can't drop before header
-                      if (oldIndex <= 0) return;   // header can't be dragged
-                      setState(() {
-                        final item = _savedFunds.removeAt(oldIndex - 1);
-                        _savedFunds.insert(newIndex - 1, item);
-                      });
-                      FundStore.save(_savedFunds);
-                    },
                     itemBuilder: (ctx, i) {
                       if (i == 0) return _buildTableHeader();
                       return _buildFundRow(i - 1, _savedFunds[i - 1], session);
@@ -954,6 +942,7 @@ class _HomePageState extends State<HomePage> {
 
   // ── Fund Row (table row style) ──
   Widget _buildFundRow(int listIdx, SavedFund saved, String session) {
+    // listIdx is unused now; kept for API consistency
     final code = saved.code;
     final data = _results[code];
     final isLoading = _loading[code] == true;
@@ -994,15 +983,13 @@ class _HomePageState extends State<HomePage> {
     final prevEarnSign = prevEarnings >= 0 ? '+' : '';
     final prevEarnColor = prevEarnings >= 0 ? kRedUp : kGreenDown;
 
-    return ReorderableDragStartListener(
-      index: listIdx,
+    return Column(
       key: ValueKey('row_$code'),
-      child: Column(
-        children: [
+      children: [
           Container(
-          color: isSelected ? const Color(0xFFFFF5F5) : null,
-          child: InkWell(
-            onTap: () {
+            color: isSelected ? const Color(0xFFFFF5F5) : null,
+            child: InkWell(
+              onTap: () {
               if (_selectionMode) {
                 setState(() {
                   if (_selectedCodes.contains(code)) { _selectedCodes.remove(code); if (_selectedCodes.isEmpty) _selectionMode = false; }
@@ -1016,135 +1003,125 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Column(
                 children: [
-                  // ── Top row: Main 3-column (delete button overlays in Stack) ──
-                  Stack(
-                    clipBehavior: Clip.none,
+                  // ── Top row: 3-column layout ──
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Main 3-column row (no right padding, delete button is outside)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 0),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+                      // Col 1: 名称 (flex: 3)
+                      Expanded(
+                        flex: 3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            // Col 1: 名称 (flex: 3)
-                            Expanded(
-                              flex: 3,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Row(
-                                    crossAxisAlignment: CrossAxisAlignment.center,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          data?.fundName ?? '查询中…',
-                                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
-                                        ),
-                                      ),
-                                      if (isLoading)
-                                        const Padding(
-                                          padding: EdgeInsets.only(left: 4),
-                                          child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-                                        ),
-                                    ],
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    data?.fundName ?? '查询中…',
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2D3748)),
                                   ),
-                                  const SizedBox(height: 1),
-                                  Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
-                                ],
-                              ),
+                                ),
+                                if (isLoading)
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 4),
+                                    child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  ),
+                              ],
                             ),
-                            // Col 2: 金额/昨日收益
-                            Expanded(
-                              flex: 3,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  GestureDetector(
-                                    onTap: () => _editAmount(code, amount),
-                                    child: Text('¥${FundApi.formatAmount(amount)}',
-                                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
-                                  ),
-                                  const SizedBox(height: 1),
-                                  Text('$prevEarnSign¥${FundApi.formatAmount(prevEarnings)}',
-                                      style: TextStyle(fontSize: 11, color: prevEarnColor)),
-                                ],
-                              ),
+                            const SizedBox(height: 1),
+                            Text(code, style: const TextStyle(fontSize: 10, color: kTextMuted)),
+                          ],
+                        ),
+                      ),
+                      // Col 2: 金额/昨日收益 (flex: 3)
+                      Expanded(
+                        flex: 3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            GestureDetector(
+                              onTap: () => _editAmount(code, amount),
+                              child: Text('¥${FundApi.formatAmount(amount)}',
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
                             ),
-                            // Col 3: 今日收益率/收益
-                            Expanded(
-                              flex: 4,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      if (data != null && data.isEstimated && hasActiveData)
-                                        _buildEstimateTag(),
-                                      if (data != null && hasActiveData) const SizedBox(width: 4),
-                                      Text(
-                                        hasActiveData
-                                            ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
-                                            : '0.00%',
-                                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
-                                            color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 1),
-                                  Text(
-                                    hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
-                                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                                        color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
-                                  ),
-                                ],
-                              ),
+                            const SizedBox(height: 1),
+                            Text('$prevEarnSign¥${FundApi.formatAmount(prevEarnings)}',
+                                style: TextStyle(fontSize: 11, color: prevEarnColor)),
+                          ],
+                        ),
+                      ),
+                      // Col 3: 今日收益率/收益 (flex: 4)
+                      Expanded(
+                        flex: 4,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (data != null && data.isEstimated && hasActiveData)
+                                  _buildEstimateTag(),
+                                if (data != null && hasActiveData) const SizedBox(width: 4),
+                                Text(
+                                  hasActiveData
+                                      ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
+                                      : '0.00%',
+                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
+                                      color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                                  color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
                             ),
                           ],
                         ),
                       ),
-                      // Delete button (outside card, top-right corner)
+                    ],
+                  ),
+                  // ── Bottom row: 详细信息 (left) + delete (right) ──
+                  Row(
+                    children: [
+                      // Details toggle (left)
+                      InkWell(
+                        onTap: () => setState(() => _expanded[code] = !isExpanded),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('详细信息',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
+                              const SizedBox(width: 2),
+                              Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                                  size: 18, color: Color(0xFF718096)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      // Delete button (right)
                       if (!_selectionMode)
-                        Positioned(
-                          right: -22, top: -6,
-                          child: GestureDetector(
-                            onTap: () => _showDeleteConfirm(code),
+                        GestureDetector(
+                          onTap: () => _showDeleteConfirm(code),
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
                             child: Container(
-                              padding: const EdgeInsets.all(12),
-                              alignment: Alignment.center,
-                              child: Container(
-                                width: 16, height: 16,
-                                decoration: BoxDecoration(color: kTextMuted.withOpacity(0.15), shape: BoxShape.circle),
-                                child: Icon(Icons.close, size: 10, color: kTextMuted),
-                              ),
+                              width: 18, height: 18,
+                              decoration: BoxDecoration(color: kTextMuted.withOpacity(0.12), shape: BoxShape.circle),
+                              child: Icon(Icons.close, size: 11, color: kTextMuted.withOpacity(0.7)),
                             ),
                           ),
                         ),
                     ],
-                  ),
-                  // ── Collapsible details (right-aligned with arrow) ──
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: InkWell(
-                      onTap: () => setState(() => _expanded[code] = !isExpanded),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('详细信息',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
-                            const SizedBox(width: 2),
-                            Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                                size: 18, color: Color(0xFF718096)),
-                          ],
-                        ),
-                      ),
-                    ),
                   ),
                   if (isExpanded && data != null) ...[
                     const SizedBox(height: 8),
@@ -1212,8 +1189,8 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
-          ),
-          ), // Container close
+            ),
+          ), // close Container B
           // Separator line
           Container(height: 1, color: const Color(0xFFE2E8F0)),
         ],
