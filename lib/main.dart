@@ -264,7 +264,6 @@ class FundApi {
     } finally { c.close(); }
   }
 
-  /// Check if a date string refers to today. Handles both yyyy-MM-dd and MM-dd formats.
   static bool isSameDay(String? s) {
     if (s == null || s.isEmpty) return false;
     try {
@@ -273,7 +272,6 @@ class FundApi {
       return p.year == n.year && p.month == n.month && p.day == n.day;
     } catch (_) {
       try {
-        // Try MM-dd format (e.g., "05-25")
         final p = DateFormat('MM-dd').parse(s);
         final n = DateTime.now();
         return p.month == n.month && p.day == n.day;
@@ -360,15 +358,14 @@ class FundApi {
     final today = dateKey(now);
     final session = getSessionLabel();
     final nowStr = DateFormat('HH:mm').format(now);
+    final isTrading = isTradingSession(session);
     String? globalError;
 
     final cached = todayRecords.where((r) => r.fundCode == fundCode).toList();
 
-    // ── Outside trading hours: use cached data (unless force refresh) ──
-    if (!forceRefresh && !isTradingSession(session) && cached.isNotEmpty) {
+    // 非交易时段且不是强制刷新时，优先使用缓存
+    if (!forceRefresh && !isTrading && cached.isNotEmpty) {
       final r = cached.first;
-      // If cached data is already final (NAV published), return it.
-      // If session is '已收盘' and NAV wasn't published yet, fall through to check.
       if (r.isFinal) {
         return FundDisplayData(
           fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
@@ -378,7 +375,6 @@ class FundApi {
         );
       }
       if (session != '已收盘') {
-        // 未开市/休市: show cached data
         return FundDisplayData(
           fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
           currentChange: r.finalChange,
@@ -386,10 +382,10 @@ class FundApi {
           holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: !r.isFinal,
         );
       }
-      // 已收盘 but cache is not final: fall through to re-fetch (NAV might be out now)
+      // 已收盘但缓存不是最终，继续重新获取
     }
 
-    // ── Fetch live ──
+    // 获取基本信息
     Map<String, dynamic> base;
     try { base = await fetchBaseInfo(fundCode); }
     catch (e) {
@@ -401,6 +397,7 @@ class FundApi {
     final navDate = base['navDate'] as String?;
     final actualChange = base['actualChange'] as double?;
 
+    // 获取持仓
     List<Map<String, dynamic>> rawHoldings = [];
     try { rawHoldings = await fetchHoldings(fundCode); }
     catch (e) {
@@ -417,39 +414,64 @@ class FundApi {
     int successCount = 0;
     final newChanges = <String, double?>{};
 
+    // 核心逻辑：是否需要强制刷新个股涨跌幅
+    // 交易时段内、或收盘后净值未公布时、或手动强制刷新时，都直接请求腾讯接口
+    bool needFresh = forceRefresh || isTrading || (session == '已收盘' && actualChange == null);
+
     for (final h in rawHoldings) {
       final pct = (h['pct'] as num).toDouble();
       totalPct += pct;
       final code = h['code'] as String;
-      double? change = todayStockChanges[code];
-      if (change == null) {
-        try { change = await fetchStockChange(code); } catch (_) {}
-        if (change == null && cached.isNotEmpty) {
-          final ch = cached.first.holdings.where((s) => s.code == code).toList();
-          if (ch.isNotEmpty) change = ch.first.change;
+      double? change;
+      String? errMsg;
+
+      if (needFresh) {
+        // 强制获取实时/收盘数据
+        try {
+          change = await fetchStockChange(code);
+          if (change == null) errMsg = '解析失败';
+        } catch (e) {
+          errMsg = e.toString();
+        }
+      } else {
+        // 非强制刷新，使用缓存
+        change = todayStockChanges[code];
+        if (change == null) {
+          try {
+            change = await fetchStockChange(code);
+            if (change == null) errMsg = '解析失败';
+          } catch (e) {
+            errMsg = e.toString();
+          }
+          if (change == null && cached.isNotEmpty) {
+            final ch = cached.first.holdings.where((s) => s.code == code).toList();
+            if (ch.isNotEmpty) change = ch.first.change;
+          }
         }
       }
+
       newChanges[code] = change;
-      if (change != null) { weightedChange += pct * change; successCount++; }
-      holdings.add(StockHolding(name: h['name'], code: code, pct: pct, change: change));
+      if (change != null) {
+        weightedChange += pct * change;
+        successCount++;
+      }
+      holdings.add(StockHolding(name: h['name'], code: code, pct: pct, change: change, errorMsg: errMsg));
     }
 
     double estimatedChange = (totalPct > 0 && successCount > 0) ? truncateTo(weightedChange / 100.0, 2) : 0.0;
-
     FundDailyRecord record;
     FundDisplayData display;
 
-    if (isTradingSession(session)) {
+    if (isTrading) {
       record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
       display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: session == '午休' ? '午休' : '交易中', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
     } else if (session == '已收盘') {
-      // After 15:00, whatever actualChange the page returns IS the final NAV.
-      // 东方财富页面不会给预估值 — 要么没有值(null)，要么就是最终值。
       if (actualChange != null) {
+        // 最终净值已公布
         record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: actualChange, isFinal: true, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
         display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange, status: '已收盘（最终）', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: false, networkError: globalError);
       } else {
-        // 页面还没有更新当日净值，用持仓股票估算(15点后股票涨跌幅已是最终值)
+        // 净值未公布，使用持仓股票估算（当日收盘后的估算值）
         record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
         display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: '待公布净值', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
       }
@@ -469,7 +491,7 @@ class FundApi {
       display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange ?? estimatedChange, status: session, holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: actualChange == null, networkError: globalError);
     }
 
-    // ── Persist ──
+    // 持久化
     if (newChanges.isNotEmpty) {
       final merged = Map<String, double>.from(todayStockChanges);
       newChanges.forEach((k, v) { if (v != null) merged[k] = v; });
@@ -531,7 +553,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() { _autoRefreshTimer?.cancel(); _codeCtrl.dispose(); _amountCtrl.dispose(); super.dispose(); }
 
-  /// Calculate today's amounts with carryover from previous trading day.
   Future<void> _computeTodayAmounts() async {
     if (_savedFunds.isEmpty) return;
     final today = dateKey(DateTime.now());
@@ -575,7 +596,6 @@ class _HomePageState extends State<HomePage> {
     }
     return t;
   }
-  /// Checks if any fund data is estimated (rather than final).
   bool get _hasAnyEstimated => _savedFunds.any((f) => (_results[f.code]?.isEstimated ?? false) && _results[f.code] != null);
 
   Future<void> _loadSaved() async {
@@ -600,13 +620,18 @@ class _HomePageState extends State<HomePage> {
     _autoRefreshTimer?.cancel();
     _autoRefreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (!mounted || _savedFunds.isEmpty) return;
-      // Only auto-refresh during trading hours (9:30-15:00 on trading days)
       final session = getSessionLabel();
-      if (isTradingSession(session)) _refreshAll();
+      if (isTradingSession(session)) {
+        _refreshAll(force: true);
+      } else if (session == '已收盘') {
+        // 收盘后，如果有尚未公布净值的基金，也刷新（估算值需更新，或检查净值是否已公布）
+        final hasUnfinal = _savedFunds.any((f) => (_results[f.code]?.isEstimated ?? true));
+        if (hasUnfinal) _refreshAll(force: true);
+      }
     });
   }
 
-  Future<void> _refreshAll({bool force = false}) async {
+  Future<void> _refreshAll({bool force = true}) async {
     for (var f in _savedFunds) { _querySingle(f.code, forceRefresh: force); }
   }
 
@@ -622,10 +647,8 @@ class _HomePageState extends State<HomePage> {
         forceRefresh: forceRefresh,
       );
       setState(() { _results[code] = result; _loading[code] = false; });
-      // Update local records from query result
-      final today = dateKey(DateTime.now());
-      _todayRecords = await DailyStore.loadFundDailyRecords(today);
-      _todayStockChanges = await DailyStore.loadStockChanges(today);
+      _todayRecords = await DailyStore.loadFundDailyRecords(dateKey(DateTime.now()));
+      _todayStockChanges = await DailyStore.loadStockChanges(dateKey(DateTime.now()));
     } catch (e) {
       setState(() {
         _results[code] = FundDisplayData(
@@ -639,7 +662,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _addFromBar() {
-    // Dismiss keyboard
     FocusScope.of(context).requestFocus(FocusNode());
     final code = _codeCtrl.text.trim();
     if (code.length != 6 || !RegExp(r'^\d{6}$').hasMatch(code)) {
@@ -671,7 +693,6 @@ class _HomePageState extends State<HomePage> {
     await DailyStore.saveDailyAmounts(today, _todayAmounts);
     await FundStore.save(_savedFunds);
     setState(() {});
-    // Small delay to let the widget rebuild with the new row, then fetch data
     await Future.delayed(const Duration(milliseconds: 100));
     _querySingle(code, forceRefresh: true);
   }
@@ -847,7 +868,7 @@ class _HomePageState extends State<HomePage> {
             if (_selectionMode) IconButton(icon: const Icon(Icons.delete_sweep, size: 22, color: Colors.red), tooltip: '删除所选', onPressed: _showDeleteSelectedConfirm, constraints: const BoxConstraints(minWidth: 40, minHeight: 40), padding: EdgeInsets.zero),
           ]),
         ),
-        // Summary bar — always show
+        // Summary bar
         _buildSummaryBar(),
         // Fund table
         Expanded(
@@ -857,7 +878,7 @@ class _HomePageState extends State<HomePage> {
                   onRefresh: () async => _refreshAll(force: true),
                   child: ListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 80),
-                    itemCount: _savedFunds.length + 1, // +1 for table header
+                    itemCount: _savedFunds.length + 1,
                     itemBuilder: (ctx, i) {
                       if (i == 0) return _buildTableHeader();
                       return _buildFundRow(i - 1, _savedFunds[i - 1], session);
@@ -869,7 +890,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ── Summary Bar (always visible, white background) ──
   Widget _buildSummaryBar() {
     final totalHoldings = _totalHoldings();
     final totalEarnings = _totalEarnings();
@@ -885,7 +905,6 @@ class _HomePageState extends State<HomePage> {
       decoration: const BoxDecoration(color: Colors.white),
       child: Row(
         children: [
-          // Total holdings
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('持有金额', style: TextStyle(fontSize: 12, color: kTextMuted)),
@@ -894,9 +913,7 @@ class _HomePageState extends State<HomePage> {
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF2D3748))),
             ]),
           ),
-          // Vertical divider
           Container(width: 1, height: 36, color: kBorder, margin: const EdgeInsets.symmetric(horizontal: 12)),
-          // Total earnings
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
               Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -915,7 +932,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ── Table Header ──
   Widget _buildTableHeader() {
     return Container(
       key: const ValueKey('table_header'),
@@ -940,9 +956,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ── Fund Row (table row style) ──
   Widget _buildFundRow(int listIdx, SavedFund saved, String session) {
-    // listIdx is unused now; kept for API consistency
     final code = saved.code;
     final data = _results[code];
     final isLoading = _loading[code] == true;
@@ -950,20 +964,17 @@ class _HomePageState extends State<HomePage> {
     final isSelected = _selectedCodes.contains(code);
     final amount = _getTodayAmount(code);
     final hasActiveData = session == '交易中' || session == '午休' || session == '已收盘';
-    // Today's change: only show real data during trading hours or after close
     final displayChange = data != null && hasActiveData ? data.currentChange : 0.0;
     final earnings = hasActiveData && data != null && amount > 0 ? amount * data.currentChange / 100.0 : 0.0;
     final earnColor = earnings >= 0 ? kRedUp : kGreenDown;
     final earnSign = earnings >= 0 ? '+' : '';
 
-    // Previous day change for details section
     double prevChange = 0;
     bool hasPrevData = false;
     if (_prevRecords.isNotEmpty) {
       final prev = _prevRecords.where((r) => r.fundCode == code).toList();
       if (prev.isNotEmpty) { prevChange = prev.first.finalChange; hasPrevData = true; }
     }
-    // Fallback: if no prevRecords but data has a non-estimated currentChange, use it as prev day
     if (!hasPrevData && data != null && !data.isEstimated) {
       prevChange = data.currentChange;
       hasPrevData = true;
@@ -971,13 +982,11 @@ class _HomePageState extends State<HomePage> {
     final prevColor = prevChange >= 0 ? kRedUp : kGreenDown;
     final prevSign = prevChange >= 0 ? '+' : '';
     final prevChangeText = hasPrevData ? '$prevSign${FundApi.formatTruncated(prevChange, 2)}%' : '--';
-    // Previous day amount for compute
-    double prevAmount = amount;
     double prevEarnings = 0;
     if (hasPrevData) {
       final prev = _prevRecords.where((r) => r.fundCode == code).toList();
       if (prev.isNotEmpty) {
-        prevEarnings = prevAmount * prev.first.finalChange / 100.0;
+        prevEarnings = amount * prev.first.finalChange / 100.0;
       }
     }
     final prevEarnSign = prevEarnings >= 0 ? '+' : '';
@@ -986,10 +995,10 @@ class _HomePageState extends State<HomePage> {
     return Column(
       key: ValueKey('row_$code'),
       children: [
-          Container(
-            color: isSelected ? const Color(0xFFFFF5F5) : null,
-            child: InkWell(
-              onTap: () {
+        Container(
+          color: isSelected ? const Color(0xFFFFF5F5) : null,
+          child: InkWell(
+            onTap: () {
               if (_selectionMode) {
                 setState(() {
                   if (_selectedCodes.contains(code)) { _selectedCodes.remove(code); if (_selectedCodes.isEmpty) _selectionMode = false; }
@@ -1003,11 +1012,10 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Column(
                 children: [
-                  // ── Top row: 3-column layout ──
+                  // Top row: 3-column layout
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Col 1: 名称 (flex: 3)
                       Expanded(
                         flex: 3,
                         child: Column(
@@ -1035,7 +1043,6 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                       ),
-                      // Col 2: 金额/昨日收益 (flex: 3)
                       Expanded(
                         flex: 3,
                         child: Column(
@@ -1053,7 +1060,6 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                       ),
-                      // Col 3: 今日收益率/收益 (flex: 4)
                       Expanded(
                         flex: 4,
                         child: Column(
@@ -1064,8 +1070,7 @@ class _HomePageState extends State<HomePage> {
                               mainAxisSize: MainAxisSize.min,
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
-                                if (data != null && data.isEstimated && hasActiveData)
-                                  _buildEstimateTag(),
+                                if (data != null && data.isEstimated && hasActiveData) _buildEstimateTag(),
                                 if (data != null && hasActiveData) const SizedBox(width: 4),
                                 Text(
                                   hasActiveData
@@ -1087,10 +1092,9 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ],
                   ),
-                  // ── Bottom row: 详细信息 (left) + delete (right) ──
+                  // Bottom row: details toggle + delete
                   Row(
                     children: [
-                      // Details toggle (left)
                       InkWell(
                         onTap: () => setState(() => _expanded[code] = !isExpanded),
                         child: Padding(
@@ -1108,7 +1112,6 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                       const Spacer(),
-                      // Delete button (right)
                       if (!_selectionMode)
                         GestureDetector(
                           onTap: () => _showDeleteConfirm(code),
@@ -1125,7 +1128,6 @@ class _HomePageState extends State<HomePage> {
                   ),
                   if (isExpanded && data != null) ...[
                     const SizedBox(height: 8),
-                    // Detail info
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
@@ -1136,7 +1138,6 @@ class _HomePageState extends State<HomePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Previous day change (first in details)
                           Row(children: [
                             Text('上一交易日涨跌幅：',
                                 style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
@@ -1189,15 +1190,12 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
-            ),
-          ), // close Container B
-          // Separator line
-          Container(height: 1, color: const Color(0xFFE2E8F0)),
-        ],
-      );
+          ),
+        ),
+        Container(height: 1, color: const Color(0xFFE2E8F0)),
+      ],
+    );
   }
-
-  // ── Widget helpers ──
 
   Widget _buildEstimateTag() {
     return Container(
@@ -1237,7 +1235,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showDeleteConfirm(String code) {
-    FocusScope.of(context).requestFocus(FocusNode()); // dismiss keyboard
+    FocusScope.of(context).requestFocus(FocusNode());
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
