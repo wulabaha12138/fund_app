@@ -37,7 +37,6 @@ const Color kTextMuted = Color(0xFF64748B);
 const Color kBorder = Color(0xFFE2E8F0);
 const Color kEstimateTagBg = Color(0xFFFFF3E0);
 const Color kEstimateTagText = Color(0xFFE65100);
-const Color kHeaderBg = Color(0xFFF1F5F9);
 
 // ── Time Helpers ──
 
@@ -364,6 +363,7 @@ class FundApi {
     final cached = todayRecords.where((r) => r.fundCode == fundCode).toList();
 
     // 非交易时段且不是强制刷新时，优先使用缓存
+    // 但是，如果 session == '已收盘' 且缓存不是最终数据，则忽略缓存（净值未公布，需要实时估算）
     if (!forceRefresh && !isTrading && cached.isNotEmpty) {
       final r = cached.first;
       if (r.isFinal) {
@@ -382,7 +382,7 @@ class FundApi {
           holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: !r.isFinal,
         );
       }
-      // 已收盘但缓存不是最终，继续重新获取
+      // session == '已收盘' 且缓存不是最终 → 继续实时获取
     }
 
     // 获取基本信息
@@ -414,8 +414,8 @@ class FundApi {
     int successCount = 0;
     final newChanges = <String, double?>{};
 
-    // 核心逻辑：是否需要强制刷新个股涨跌幅
-    // 交易时段内、或收盘后净值未公布时、或手动强制刷新时，都直接请求腾讯接口
+    // 关键：是否需要强制刷新个股涨跌幅
+    // 交易时段内、收盘后净值未公布时、手动强制刷新，都直接请求腾讯接口
     bool needFresh = forceRefresh || isTrading || (session == '已收盘' && actualChange == null);
 
     for (final h in rawHoldings) {
@@ -426,7 +426,6 @@ class FundApi {
       String? errMsg;
 
       if (needFresh) {
-        // 强制获取实时/收盘数据
         try {
           change = await fetchStockChange(code);
           if (change == null) errMsg = '解析失败';
@@ -434,7 +433,6 @@ class FundApi {
           errMsg = e.toString();
         }
       } else {
-        // 非强制刷新，使用缓存
         change = todayStockChanges[code];
         if (change == null) {
           try {
@@ -459,6 +457,7 @@ class FundApi {
     }
 
     double estimatedChange = (totalPct > 0 && successCount > 0) ? truncateTo(weightedChange / 100.0, 2) : 0.0;
+
     FundDailyRecord record;
     FundDisplayData display;
 
@@ -937,19 +936,19 @@ class _HomePageState extends State<HomePage> {
       key: const ValueKey('table_header'),
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       decoration: BoxDecoration(
-        color: Color(0xFFEDF2F7),
-        border: Border(bottom: BorderSide(color: Color(0xFFCBD5E0), width: 1)),
+        color: const Color(0xFFEDF2F7),
+        border: const Border(bottom: BorderSide(color: Color(0xFFCBD5E0), width: 1)),
       ),
       child: Row(
         children: [
           Expanded(flex: 3, child: Text('名称',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
           Expanded(flex: 3, child: Text('金额/昨日收益', textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
           Expanded(flex: 4, child: Align(
             alignment: Alignment.centerRight,
             child: Text('今日收益率/收益',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568))),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568))),
           )),
         ],
       ),
@@ -1077,7 +1076,7 @@ class _HomePageState extends State<HomePage> {
                                       ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
                                       : '0.00%',
                                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
-                                      color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
+                                      color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : const Color(0xFFCBD5E0)),
                                 ),
                               ],
                             ),
@@ -1085,7 +1084,7 @@ class _HomePageState extends State<HomePage> {
                             Text(
                               hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                                  color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
+                                  color: hasActiveData ? earnColor : const Color(0xFFCBD5E0)),
                             ),
                           ],
                         ),
@@ -1106,7 +1105,7 @@ class _HomePageState extends State<HomePage> {
                                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
                               const SizedBox(width: 2),
                               Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                                  size: 18, color: Color(0xFF718096)),
+                                  size: 18, color: const Color(0xFF718096)),
                             ],
                           ),
                         ),
@@ -1131,9 +1130,9 @@ class _HomePageState extends State<HomePage> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: Color(0xFFF7FAFC),
+                        color: const Color(0xFFF7FAFC),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Color(0xFFE2E8F0)),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1204,7 +1203,7 @@ class _HomePageState extends State<HomePage> {
         color: kEstimateTagBg,
         borderRadius: BorderRadius.circular(3),
       ),
-      child: Text('预估', style: TextStyle(fontSize: 9, color: kEstimateTagText, fontWeight: FontWeight.bold, height: 1)),
+      child: Text('预估', style: const TextStyle(fontSize: 9, color: kEstimateTagText, fontWeight: FontWeight.bold, height: 1)),
     );
   }
 
