@@ -37,6 +37,7 @@ const Color kTextMuted = Color(0xFF64748B);
 const Color kBorder = Color(0xFFE2E8F0);
 const Color kEstimateTagBg = Color(0xFFFFF3E0);
 const Color kEstimateTagText = Color(0xFFE65100);
+const Color kHeaderBg = Color(0xFFF1F5F9);
 
 // ── Time Helpers ──
 
@@ -280,26 +281,49 @@ class FundApi {
     }
   }
 
+  /// 改进：更精准的腾讯行情接口解析
+  /// 优先读取字段31（涨跌幅%），如果为0则用字段32（涨跌额）+ 字段3（昨收）反算
   static Future<double?> fetchStockChange(String code) async {
     final prefix = code.startsWith('6') ? 'sh' : (code.startsWith('8') || code.startsWith('4') ? 'bj' : 'sz');
     try {
       final bytes = await _getBytes('https://qt.gtimg.cn/q=$prefix$code');
-      final parts = <String>[];
-      int s = 0;
-      for (int i = 0; i < bytes.length; i++) {
-        if (bytes[i] == 0x7E) { parts.add(utf8.decode(bytes.sublist(s, i), allowMalformed: true)); s = i + 1; }
+      final text = utf8.decode(bytes, allowMalformed: true);
+      final parts = text.split('~');
+      
+      // 策略1: 直接从字段31获取涨跌幅%
+      if (parts.length > 31) {
+        final raw = parts[31].trim().replaceAll('%', '');
+        if (raw.isNotEmpty && raw != '--') {
+          final v = double.tryParse(raw);
+          if (v != null && v.abs() < 100) return v;
+        }
       }
-      if (s < bytes.length) parts.add(utf8.decode(bytes.sublist(s), allowMalformed: true));
-      for (final idx in [32, 31, 33, 3]) {
-        if (parts.length > idx) {
-          final raw = parts[idx].trim().replaceAll('%', '');
-          if (raw.isNotEmpty && raw != '--' && raw != '0.00') {
-            final v = double.tryParse(raw);
-            if (v != null && v.abs() < 100) return v;
+      
+      // 策略2: 从字段32（涨跌额）和字段3（昨收）反算涨跌幅
+      if (parts.length > 32 && parts.length > 3) {
+        final raw32 = parts[32].trim();
+        final raw3 = parts[3].trim();
+        if (raw32.isNotEmpty && raw32 != '--' && raw3.isNotEmpty && raw3 != '--') {
+          final changePrice = double.tryParse(raw32);
+          final prevClose = double.tryParse(raw3);
+          if (changePrice != null && prevClose != null && prevClose > 0) {
+            final pct = changePrice / prevClose * 100;
+            if (pct.abs() < 100) return double.parse(pct.toStringAsFixed(2));
           }
         }
       }
-      for (int i = 3; i < parts.length && i < 40; i++) {
+      
+      // 策略3: 尝试字段33
+      if (parts.length > 33) {
+        final raw = parts[33].trim().replaceAll('%', '');
+        if (raw.isNotEmpty && raw != '--') {
+          final v = double.tryParse(raw);
+          if (v != null && v.abs() > 0 && v.abs() < 100) return v;
+        }
+      }
+      
+      // 策略4: 兜底扫描
+      for (int i = 3; i < parts.length && i < 45; i++) {
         final raw = parts[i].trim().replaceAll('%', '');
         if (raw.isNotEmpty && raw != '--') {
           final v = double.tryParse(raw);
@@ -362,11 +386,11 @@ class FundApi {
 
     final cached = todayRecords.where((r) => r.fundCode == fundCode).toList();
 
-    // 非交易时段且不是强制刷新时，优先使用缓存
-    // 但是，如果 session == '已收盘' 且缓存不是最终数据，则忽略缓存（净值未公布，需要实时估算）
+    // 缓存使用策略：非交易时段且不强制刷新时；但已收盘且缓存非最终时忽略缓存（需要重新计算）
     if (!forceRefresh && !isTrading && cached.isNotEmpty) {
       final r = cached.first;
       if (r.isFinal) {
+        // 最终数据（净值已公布），直接返回
         return FundDisplayData(
           fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
           currentChange: r.finalChange,
@@ -375,6 +399,7 @@ class FundApi {
         );
       }
       if (session != '已收盘') {
+        // 未开市或休市：使用缓存估算值
         return FundDisplayData(
           fundName: r.fundName, fundCode: r.fundCode, nav: r.nav, navDate: r.navDate,
           currentChange: r.finalChange,
@@ -382,7 +407,7 @@ class FundApi {
           holdings: r.holdings, totalPct: r.totalPct, updateTime: r.updateTime, isEstimated: !r.isFinal,
         );
       }
-      // session == '已收盘' 且缓存不是最终 → 继续实时获取
+      // session == '已收盘' 但缓存不是最终 => 净值未公布，需要重新获取个股收盘数据计算当天估算值
     }
 
     // 获取基本信息
@@ -414,8 +439,8 @@ class FundApi {
     int successCount = 0;
     final newChanges = <String, double?>{};
 
-    // 关键：是否需要强制刷新个股涨跌幅
-    // 交易时段内、收盘后净值未公布时、手动强制刷新，都直接请求腾讯接口
+    // 核心逻辑：是否需要强制刷新个股涨跌幅
+    // 交易时段内、或收盘后净值未公布时、或手动强制刷新时，都直接请求腾讯接口
     bool needFresh = forceRefresh || isTrading || (session == '已收盘' && actualChange == null);
 
     for (final h in rawHoldings) {
@@ -426,6 +451,7 @@ class FundApi {
       String? errMsg;
 
       if (needFresh) {
+        // 强制获取实时/收盘数据
         try {
           change = await fetchStockChange(code);
           if (change == null) errMsg = '解析失败';
@@ -433,6 +459,7 @@ class FundApi {
           errMsg = e.toString();
         }
       } else {
+        // 非强制刷新，使用缓存
         change = todayStockChanges[code];
         if (change == null) {
           try {
@@ -457,7 +484,6 @@ class FundApi {
     }
 
     double estimatedChange = (totalPct > 0 && successCount > 0) ? truncateTo(weightedChange / 100.0, 2) : 0.0;
-
     FundDailyRecord record;
     FundDisplayData display;
 
@@ -465,17 +491,29 @@ class FundApi {
       record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
       display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: session == '午休' ? '午休' : '交易中', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
     } else if (session == '已收盘') {
-      if (actualChange != null) {
-        // 最终净值已公布
+      // 15点后显示当天数据：净值已公布用官方值，否则用个股收盘价估算
+      if (actualChange != null && isSameDay(navDate)) {
+        // 当天净值已公布，使用官方净值涨跌幅
         record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: actualChange, isFinal: true, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
         display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange, status: '已收盘（最终）', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: false, networkError: globalError);
       } else {
-        // 净值未公布，使用持仓股票估算（当日收盘后的估算值）
+        // 当天净值尚未公布：根据个股今日涨跌幅计算基金当天估算值
         record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: estimatedChange, isFinal: false, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
-        display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: '待公布净值', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
+        display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: estimatedChange, status: '待公布净值（已收盘估算）', holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: true, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + estimatedChange / 100), 4) : null, networkError: globalError);
       }
     } else {
-      // 未开市 / 休市
+      // 未开市 / 休市：优先使用当天数据，其次上一交易日
+      if (cached.isNotEmpty) {
+        final cachedRecord = cached.first;
+        if (cachedRecord.isFinal) {
+          display = FundDisplayData(fundName: cachedRecord.fundName, fundCode: cachedRecord.fundCode, nav: cachedRecord.nav, navDate: cachedRecord.navDate, currentChange: cachedRecord.finalChange, status: session == '休市' ? '休市（最终）' : '未开市（最终）', holdings: cachedRecord.holdings, totalPct: cachedRecord.totalPct, updateTime: cachedRecord.updateTime, isEstimated: false, networkError: globalError);
+          final allToday = [FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: cachedRecord.finalChange, isFinal: true, holdings: cachedRecord.holdings, totalPct: cachedRecord.totalPct, updateTime: nowStr), ...todayRecords.where((r) => r.fundCode != fundCode)];
+          await DailyStore.saveFundDailyRecords(today, allToday);
+          return display;
+        }
+        display = FundDisplayData(fundName: cachedRecord.fundName, fundCode: cachedRecord.fundCode, nav: cachedRecord.nav, navDate: cachedRecord.navDate, currentChange: cachedRecord.finalChange, status: session == '休市' ? '休市（估算）' : '未开市（估算）', holdings: cachedRecord.holdings, totalPct: cachedRecord.totalPct, updateTime: cachedRecord.updateTime, isEstimated: true, networkError: globalError);
+        return display;
+      }
       if (prevRecords.isNotEmpty) {
         final p = prevRecords.where((r) => r.fundCode == fundCode).toList();
         if (p.isNotEmpty) {
@@ -486,8 +524,8 @@ class FundApi {
           return FundDisplayData(fundName: pr.fundName, fundCode: pr.fundCode, nav: pr.nav, navDate: pr.navDate, currentChange: pr.finalChange, status: session, holdings: pr.holdings, totalPct: pr.totalPct, updateTime: pr.updateTime, isEstimated: !pr.isFinal, networkError: globalError);
         }
       }
-      record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: actualChange ?? estimatedChange, isFinal: actualChange != null, holdings: holdings, totalPct: totalPct, updateTime: nowStr);
-      display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange ?? estimatedChange, status: session, holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: actualChange == null, networkError: globalError);
+      record = FundDailyRecord(dateKey: today, fundCode: fundCode, fundName: fundName, nav: nav, navDate: navDate, finalChange: actualChange ?? estimatedChange, isFinal: actualChange != null && isSameDay(navDate), holdings: holdings, totalPct: totalPct, updateTime: nowStr);
+      display = FundDisplayData(fundName: fundName, fundCode: fundCode, nav: nav, navDate: navDate, currentChange: actualChange ?? estimatedChange, status: session, holdings: holdings, totalPct: totalPct, updateTime: nowStr, isEstimated: actualChange == null, estimatedNav: nav != null ? truncateTo(double.parse(nav) * (1 + (actualChange ?? estimatedChange) / 100), 4) : null, networkError: globalError);
     }
 
     // 持久化
@@ -936,19 +974,19 @@ class _HomePageState extends State<HomePage> {
       key: const ValueKey('table_header'),
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFEDF2F7),
-        border: const Border(bottom: BorderSide(color: Color(0xFFCBD5E0), width: 1)),
+        color: Color(0xFFEDF2F7),
+        border: Border(bottom: BorderSide(color: Color(0xFFCBD5E0), width: 1)),
       ),
       child: Row(
         children: [
           Expanded(flex: 3, child: Text('名称',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
           Expanded(flex: 3, child: Text('金额/昨日收益', textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568)))),
           Expanded(flex: 4, child: Align(
             alignment: Alignment.centerRight,
             child: Text('今日收益率/收益',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568))),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF4A5568))),
           )),
         ],
       ),
@@ -1076,7 +1114,7 @@ class _HomePageState extends State<HomePage> {
                                       ? '${displayChange >= 0 ? '+' : ''}${FundApi.formatTruncated(displayChange, 2)}%'
                                       : '0.00%',
                                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
-                                      color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : const Color(0xFFCBD5E0)),
+                                      color: hasActiveData ? (displayChange >= 0 ? kRedUp : kGreenDown) : Color(0xFFCBD5E0)),
                                 ),
                               ],
                             ),
@@ -1084,7 +1122,7 @@ class _HomePageState extends State<HomePage> {
                             Text(
                               hasActiveData ? '$earnSign¥${FundApi.formatAmount(earnings)}' : '¥0.00',
                               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                                  color: hasActiveData ? earnColor : const Color(0xFFCBD5E0)),
+                                  color: hasActiveData ? earnColor : Color(0xFFCBD5E0)),
                             ),
                           ],
                         ),
@@ -1105,7 +1143,7 @@ class _HomePageState extends State<HomePage> {
                                   style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF718096))),
                               const SizedBox(width: 2),
                               Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                                  size: 18, color: const Color(0xFF718096)),
+                                  size: 18, color: Color(0xFF718096)),
                             ],
                           ),
                         ),
@@ -1130,18 +1168,26 @@ class _HomePageState extends State<HomePage> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF7FAFC),
+                        color: Color(0xFFF7FAFC),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        border: Border.all(color: Color(0xFFE2E8F0)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(children: [
-                            Text('上一交易日涨跌幅：',
+                            // 问题3修复：当天最终数据时显示"今日涨跌幅"，否则显示"上一交易日涨跌幅"
+                            Text(data != null && !data.isEstimated ? '今日涨跌幅：' : '上一交易日涨跌幅：',
                                 style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
-                            Text(prevChangeText,
-                                style: TextStyle(fontSize: 11, color: prevColor, fontWeight: FontWeight.w600)),
+                            Text(data != null && !data.isEstimated
+                                ? '${data.currentChange >= 0 ? '+' : ''}${FundApi.formatTruncated(data.currentChange, 2)}%'
+                                : prevChangeText,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: data != null && !data.isEstimated
+                                        ? (data.currentChange >= 0 ? kRedUp : kGreenDown)
+                                        : prevColor,
+                                    fontWeight: FontWeight.w600)),
                           ]),
                           if (data.nav != null) ...[
                             const SizedBox(height: 4),
@@ -1203,7 +1249,7 @@ class _HomePageState extends State<HomePage> {
         color: kEstimateTagBg,
         borderRadius: BorderRadius.circular(3),
       ),
-      child: Text('预估', style: const TextStyle(fontSize: 9, color: kEstimateTagText, fontWeight: FontWeight.bold, height: 1)),
+      child: Text('预估', style: TextStyle(fontSize: 9, color: kEstimateTagText, fontWeight: FontWeight.bold, height: 1)),
     );
   }
 
