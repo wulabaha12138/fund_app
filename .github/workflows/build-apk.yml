@@ -12,26 +12,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v4.7.0
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+      - name: Install Java 17
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openjdk-17-jdk-headless
+          java -version
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2.19.0
-        with:
-          flutter-version: '3.22.0'
-          channel: 'stable'
+      - name: Install Flutter
+        run: |
+          git clone --depth 1 --branch stable https://mirrors.tuna.tsinghua.edu.cn/git/flutter-sdk.git /opt/flutter
+          echo "/opt/flutter/bin" >> $GITHUB_PATH
+          echo "/opt/flutter/bin/cache/dart-sdk/bin" >> $GITHUB_PATH
+          flutter config --android-sdk /usr/lib/android-sdk 2>/dev/null || true
 
-      - name: Install dependencies
-        run: flutter pub get
+      - name: Install Android SDK
+        run: |
+          sudo apt-get install -y -qq android-sdk
+          export ANDROID_HOME=/usr/lib/android-sdk
+          echo "ANDROID_HOME=/usr/lib/android-sdk" >> $GITHUB_ENV
+          yes | $ANDROID_HOME/tools/bin/sdkmanager --install "platforms;android-33" "build-tools;33.0.2" 2>/dev/null || true
+
+      - name: Accept Licenses
+        run: |
+          yes | /opt/flutter/bin/dart pub cache clean 2>/dev/null || true
+          yes | /opt/flutter/bin/flutter doctor --android-licenses 2>/dev/null || true
+
+      - name: Get dependencies
+        run: |
+          flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4.6.0
+        uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
